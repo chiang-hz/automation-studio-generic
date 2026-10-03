@@ -30,4 +30,9 @@ graphify-out/.graphify_root
 Thumbs.db
 *.swp
 .idea/
+
+# Development Hotfix and Version Notes (irrelevant to program execution)
+*_HOTFIX.md
+V[0-9]*.md
+VERSIONING.md
 .vscode/
