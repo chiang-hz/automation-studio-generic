@@ -1,0 +1,22 @@
+{
+  "name": "automation-studio",
+  "version": "1.2.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "playwright": "^1.60.0"
+  },
+  "scripts": {
+    "check": "node --experimental-strip-types --check src/index.ts && node --experimental-strip-types --check src/cli/runFlow.ts && node --experimental-strip-types --check src/tools/mcpTool.ts && node --experimental-strip-types --check src/ui/server.ts && node --experimental-strip-types --check src/studio/router.ts && node --experimental-strip-types --check src/studio/ai/http.ts && node --experimental-strip-types --check src/studio/ai/workflowGenerator.ts && node --experimental-strip-types --check src/studio/ai/siteExplorer.ts && node --experimental-strip-types --check src/studio/ai/debugAnalyzer.ts && node --experimental-strip-types --check src/studio/debugDiagnostics.ts && node --experimental-strip-types --check src/studio/debugRetention.ts && node --experimental-strip-types --check src/studio/runHistoryRetention.ts && node --experimental-strip-types --check src/studio/ai/providers/gemini.ts && node --experimental-strip-types --check src/studio/downloadArtifacts.ts && node --experimental-strip-types --check src/studio/executor.ts && node --experimental-strip-types --check src/studio/browser.ts && node --experimental-strip-types --check src/studio/cdp.ts && node --experimental-strip-types --check src/studio/exporter.ts && node --experimental-strip-types --check src/studio/recorder.ts && node --experimental-strip-types --check src/studio/profile.ts && node --check public/app.js && node --check public/legacy/app.js",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "demo": "node --experimental-strip-types src/cli/runFlow.ts",
+    "mcp:list": "node --experimental-strip-types src/tools/mcpTool.ts list",
+    "mcp:demo": "node --experimental-strip-types src/tools/mcpTool.ts download-demo",
+    "mcp:call": "node --experimental-strip-types src/tools/mcpTool.ts call",
+    "ui": "node --experimental-strip-types src/ui/server.ts",
+    "ui:dev": "node --watch --experimental-strip-types src/ui/server.ts",
+    "ebas:login": "node --experimental-strip-types src/cli/prepareEbasLogin.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "dev": "node --experimental-strip-types src/index.ts"
+  }
+}

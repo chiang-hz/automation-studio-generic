@@ -1,0 +1,11 @@
+{
+  "lastAttemptAt": "2026-10-03T03:02:11.212Z",
+  "lastCompletedAt": "2026-10-03T03:02:11.216Z",
+  "nextEligibleAt": "2026-10-04T03:02:11.216Z",
+  "lastReason": "startup",
+  "deletedRuns": 0,
+  "reclaimedBytes": 0,
+  "retentionDays": 30,
+  "debugRetention": "failures",
+  "running": false
+}

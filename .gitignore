@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Runtime and Authentication
+.auth/
+runtime/
+debug/
+downloads/
+exports/
+
+# User Data and Logs
+data/profiles/
+data/studio/runs/
+*.log
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# Graphify temporary cache and machine-specific configs
+graphify-out/cache/
+graphify-out/.needs_update
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
