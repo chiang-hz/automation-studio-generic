@@ -11,6 +11,7 @@ exports/
 # User Data and Logs
 data/profiles/
 data/studio/runs/
+data/studio/*-status.json
 *.log
 
 # Environment variables and secrets
