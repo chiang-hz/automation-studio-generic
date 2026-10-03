@@ -1,10 +1,4 @@
 {
-  "data/studio/debug-cleanup-status.json": {
-    "mtime": 1790996531.217389,
-    "seen": 1790999919.130752,
-    "ast_hash": "1810b4a1d0c0a5530fba1b3eab1fd546",
-    "semantic_hash": "1810b4a1d0c0a5530fba1b3eab1fd546"
-  },
   "data/studio/projects/ebas-report-example/project.json": {
     "mtime": 1790996531.2051408,
     "seen": 1790999919.1307583,
@@ -16,12 +10,6 @@
     "seen": 1790999919.1307611,
     "ast_hash": "7548e1c156d7375df164221c606ccb6b",
     "semantic_hash": "7548e1c156d7375df164221c606ccb6b"
-  },
-  "data/studio/run-history-cleanup-status.json": {
-    "mtime": 1790996531.2183883,
-    "seen": 1790999919.1307635,
-    "ast_hash": "6c305930edbc3e7d2ddb7edc2e115d9d",
-    "semantic_hash": "6c305930edbc3e7d2ddb7edc2e115d9d"
   },
   "package.json": {
     "mtime": 1790996426.4065802,
@@ -364,5 +352,47 @@
     "seen": 1790999919.1308525,
     "ast_hash": "0406f521ce2f082a484fc6d169161f59",
     "semantic_hash": "0406f521ce2f082a484fc6d169161f59"
+  },
+  ".agents/rules/graphify.md": {
+    "mtime": 1790999380.1309826,
+    "seen": 1791001850.3257146,
+    "ast_hash": "a0e4d192b9e2e17256124dbfc8e24e6a",
+    "semantic_hash": ""
+  },
+  ".agents/workflows/graphify.md": {
+    "mtime": 1790999380.1319952,
+    "seen": 1791001850.3257172,
+    "ast_hash": "a831cf3669f1e6ab85d8a80ebe655f99",
+    "semantic_hash": ""
+  },
+  "AGENTS.md": {
+    "mtime": 1790996424.5857017,
+    "seen": 1791001850.3257189,
+    "ast_hash": "82e3fe2f695c575e71737378d2eeb665",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1791001831.3294022,
+    "seen": 1791001850.3257203,
+    "ast_hash": "c34afbf82235b15ba856dcf95bbb4f2a",
+    "semantic_hash": ""
+  },
+  "public/index.html": {
+    "mtime": 1790996426.5035841,
+    "seen": 1791001850.3257215,
+    "ast_hash": "d8aec2c083e184c4aced869329565e5c",
+    "semantic_hash": ""
+  },
+  "public/legacy/index.html": {
+    "mtime": 1790996426.5675826,
+    "seen": 1791001850.3257232,
+    "ast_hash": "e0ababc86f233f8a6731a341f6c17fba",
+    "semantic_hash": ""
+  },
+  "src/studio/templates/generated-runner.ts.txt": {
+    "mtime": 1790996427.2425914,
+    "seen": 1791001850.3257246,
+    "ast_hash": "68544b58a2f97ffe49ac260fa9dbf3f1",
+    "semantic_hash": ""
   }
 }

@@ -24,6 +24,8 @@ graphify-out/cache/
 graphify-out/.needs_update
 graphify-out/.graphify_python
 graphify-out/.graphify_root
+graphify-out/20*
+graphify-out/*.sig
 
 # OS / Editor files
 .DS_Store
