@@ -1,3 +1,5 @@
+import { bindContextCancellation } from "./cancellation.ts";
+import { localFilenameTimestamp } from "../domain/localTimestamp.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Browser, Dialog, Download, Frame, Locator, Page } from "playwright";
@@ -14,6 +16,9 @@ import {
   type EbasReportDefinition
 } from "./ebasReportDefinitions.ts";
 
+import { normalizeBrowserMode, type BrowserMode } from "../domain/browserMode.ts";
+
+type BrowserLauncher = (options: { headless: boolean; slowMo: number; executablePath?: string }) => Promise<Browser>;
 type PageScope = Page | Frame;
 
 interface EbasReportFormFields {
@@ -30,11 +35,13 @@ interface EbasReportFormFields {
 
 export class EbasReportAdapter implements ReportAdapter {
   private readonly config: AppConfig;
-  private browserPromise?: Promise<Browser>;
+  private readonly browserPromises = new Map<BrowserMode, Promise<Browser>>();
+  private readonly browserLauncher?: BrowserLauncher;
   private readonly closeBrowserOnExit: () => void;
 
-  constructor(config: AppConfig) {
+  constructor(config: AppConfig, browserLauncher?: BrowserLauncher) {
     this.config = config;
+    this.browserLauncher = browserLauncher;
     this.closeBrowserOnExit = () => {
       void this.disposeBrowser();
     };
@@ -54,11 +61,14 @@ export class EbasReportAdapter implements ReportAdapter {
   }
 
   async downloadReport(input: DownloadReportInput): Promise<DownloadReportOutput> {
+    input.signal?.throwIfAborted();
     const definition = await this.getReportDefinition(input.reportId);
     const storageStatePath = input.storageStatePath ?? this.config.ebasStorageStatePath;
     await this.assertStorageStateExists(storageStatePath);
     await fs.mkdir(this.config.downloadDir, { recursive: true });
-    const browser = await this.getBrowser();
+    input.signal?.throwIfAborted();
+    const browser = await this.getBrowser(normalizeBrowserMode(input.browserMode));
+    input.signal?.throwIfAborted();
 
     try {
       return await this.runDownload(browser, input, definition, storageStatePath);
@@ -73,42 +83,44 @@ export class EbasReportAdapter implements ReportAdapter {
     }
   }
 
-  private async getBrowser(): Promise<Browser> {
-    if (!this.browserPromise) {
-      this.browserPromise = this.launchBrowser();
+  private async getBrowser(mode: BrowserMode): Promise<Browser> {
+    let pending = this.browserPromises.get(mode);
+    if (!pending) {
+      pending = this.launchBrowser(mode);
+      this.browserPromises.set(mode, pending);
     }
-
-    try {
-      return await this.browserPromise;
-    } catch (error) {
-      this.browserPromise = undefined;
+    try { return await pending; } catch (error) {
+      if (this.browserPromises.get(mode) === pending) this.browserPromises.delete(mode);
       throw error;
     }
   }
 
-  private async launchBrowser(): Promise<Browser> {
-    const { chromium } = await import("playwright");
+  private async launchBrowser(mode: BrowserMode): Promise<Browser> {
+    const launch = this.browserLauncher ?? (async (options) => {
+      const { chromium } = await import("playwright");
+      return chromium.launch(options);
+    });
     const executablePath = await resolveChromiumExecutablePath(this.config);
-    const browser = await chromium.launch({
-      headless: this.config.headless,
+    const browser = await launch({
+      headless: mode === "headless",
       slowMo: this.config.slowMo,
       ...(executablePath ? { executablePath } : {})
     });
-
+    const launchedPromise = this.browserPromises.get(mode);
     browser.once("disconnected", () => {
-      this.browserPromise = undefined;
+      // A late disconnect from an older instance must not clear its replacement.
+      if (this.browserPromises.get(mode) === launchedPromise) this.browserPromises.delete(mode);
     });
-
     return browser;
   }
 
   private async disposeBrowser(): Promise<void> {
-    const pending = this.browserPromise;
-    this.browserPromise = undefined;
-    if (!pending) return;
-
-    const browser = await pending.catch(() => undefined);
-    await browser?.close().catch(() => undefined);
+    const pending = [...this.browserPromises.values()];
+    this.browserPromises.clear();
+    await Promise.all(pending.map(async (task) => {
+      const browser = await task.catch(() => undefined);
+      await browser?.close().catch(() => undefined);
+    }));
   }
 
   private async runDownload(
@@ -121,14 +133,16 @@ export class EbasReportAdapter implements ReportAdapter {
       acceptDownloads: true,
       storageState: storageStatePath
     });
-    const page = await context.newPage();
-    const debug = input.debugEnabled
-      ? await DebugRecorder.create(this.config.ebasDebugDir, input.reportId)
-      : undefined;
-
+    const releaseContext = bindContextCancellation(context, input.signal);
+    let page: Page | undefined;
+    let debug: DebugRecorder | undefined;
     try {
+      input.signal?.throwIfAborted();
+      page = await context.newPage();
+      debug = input.debugEnabled ? await DebugRecorder.create(this.config.ebasDebugDir, input.reportId) : undefined;
       await debug?.event("task_started", {
         reportId: input.reportId,
+        browserMode: normalizeBrowserMode(input.browserMode),
         workerId: input.workerId,
         parameters: input.parameters,
         entryUrl: this.config.ebasEntryUrl
@@ -148,7 +162,7 @@ export class EbasReportAdapter implements ReportAdapter {
       const fields = await this.fillReportParameters(page, input, definition);
       await debug?.capture(page, "04-report-parameters-filled");
 
-      const download = await this.clickPrintAndWaitForDownload(page, fields, debug);
+      const download = await this.clickPrintAndWaitForDownload(page, fields, debug, input.signal);
       await debug?.event("download_started", {
         suggestedFilename: download.suggestedFilename()
       });
@@ -160,6 +174,7 @@ export class EbasReportAdapter implements ReportAdapter {
 
       return { filePath: finalPath, debugDir: debug?.dir };
     } catch (error) {
+      if (input.signal?.aborted || !page) throw error;
       const debugDir = debug
         ? await debug.captureError(page, error)
         : undefined;
@@ -174,7 +189,7 @@ export class EbasReportAdapter implements ReportAdapter {
         }
       );
     } finally {
-      await context.close();
+      await releaseContext();
     }
   }
 
@@ -270,7 +285,8 @@ export class EbasReportAdapter implements ReportAdapter {
   private async clickPrintAndWaitForDownload(
     page: Page,
     fields: EbasReportFormFields,
-    debug?: DebugRecorder
+    debug?: DebugRecorder,
+    signal?: AbortSignal
   ) {
     const scope = await getMainFrame(page);
 
@@ -281,7 +297,7 @@ export class EbasReportAdapter implements ReportAdapter {
     await ensureEbasReportFormFields(scope, fields, this.config.ebasUiIdleTimeoutMs);
 
     assertPageOpen(page, "before clicking EBAS print");
-    const downloadPromise = waitForEbasDownload(page, this.config.ebasDownloadTimeoutMs, debug);
+    const downloadPromise = waitForEbasDownload(page, this.config.ebasDownloadTimeoutMs, debug, signal);
     const printResponsePromise = waitForEbasPrintResponse(
       page,
       fields.outputFormat,
@@ -289,6 +305,10 @@ export class EbasReportAdapter implements ReportAdapter {
       debug
     );
 
+    // Attach rejection handlers immediately: cancellation can close the context
+    // while the print click is still pending.
+    void downloadPromise.catch(() => undefined);
+    void printResponsePromise.catch(() => undefined);
     const printButton = scope.locator("#print").first();
     try {
       if (await isVisible(printButton, 2_000)) {
@@ -485,10 +505,11 @@ function isNullEbasOutputPath(filePath: string): boolean {
   return filePath === "/output/null" || /(^|\/)null$/i.test(filePath);
 }
 
-async function waitForEbasDownload(
+export async function waitForEbasDownload(
   page: Page,
   timeoutMs: number,
-  debug?: DebugRecorder
+  debug?: DebugRecorder,
+  signal?: AbortSignal
 ): Promise<EbasDownloadResult> {
   const context = page.context();
   const dialogMessages: string[] = [];
@@ -535,6 +556,14 @@ async function waitForEbasDownload(
         ))
         .catch((error) => reject(buildDownloadWaitError(page, error, dialogMessages)));
     }, timeoutMs);
+
+    const onAbort = () => settle(() => reject(signal?.reason ?? new Error("任務已中斷")));
+    const onContextClose = () => settle(() => reject(new Error("下載 context 已關閉")));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    context.on("close", onContextClose);
+    cleanup.push(() => signal?.removeEventListener("abort", onAbort));
+    cleanup.push(() => context.off("close", onContextClose));
+    if (signal?.aborted) { onAbort(); return; }
 
     const attachPage = (candidate: Page, source: "page" | "popup") => {
       if (trackedPages.has(candidate)) return;
@@ -2319,9 +2348,9 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
 }
 
-function withTimestamp(name: string, extension = path.extname(name)): string {
+export function withTimestamp(name: string, extension = path.extname(name), now = new Date()): string {
   const baseName = path.basename(sanitizeFileName(name), path.extname(name));
   const safeExtension = extension || path.extname(name) || ".xlsx";
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stamp = localFilenameTimestamp(now);
   return `${baseName}-${stamp}${safeExtension}`;
 }

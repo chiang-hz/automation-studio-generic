@@ -36,5 +36,14 @@ Thumbs.db
 # Development Hotfix and Version Notes (irrelevant to program execution)
 *_HOTFIX.md
 V[0-9]*.md
+V[0-9]*.html
 VERSIONING.md
 .vscode/
+
+# Local MCP logs, CLI shims, and test visual reviews
+.playwright-mcp/
+playwright
+playwright.cmd
+playwright.ps1
+verification/
+visual-review/

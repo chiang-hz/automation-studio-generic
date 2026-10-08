@@ -127,6 +127,7 @@ export class MinimalMcpServer {
       description: "Create and start an asynchronous report download task.",
       inputSchema: objectSchema({
         reportId: { type: "string" },
+        browserMode: { type: "string", enum: ["headed", "headless"], default: "headed", description: "下載模式：headed 顯示瀏覽器視窗（預設）；headless 無頭。Debug 不會強制切換模式。" },
         debug: {
           type: "boolean",
           description: "When true, record Playwright checkpoints, screenshots, HTML, frame HTML, and errors."
@@ -136,8 +137,9 @@ export class MinimalMcpServer {
           additionalProperties: { type: "string" }
         }
       }, ["reportId"]),
-      handler: ({ reportId, parameters, debug }) =>
+      handler: ({ reportId, parameters, debug, browserMode }) =>
         this.service.createDownloadTask(String(reportId), normalizeStringRecord(parameters), {
+          browserMode: browserMode as "headed" | "headless" | undefined,
           debugEnabled: debug === true
         })
     });
@@ -146,6 +148,7 @@ export class MinimalMcpServer {
       name: "create_batch_download_task",
       description: "Create and start an asynchronous batch task that downloads multiple reports sequentially.",
       inputSchema: objectSchema({
+        browserMode: { type: "string", enum: ["headed", "headless"], default: "headed", description: "下載模式：headed 顯示瀏覽器視窗（預設）；headless 無頭。Debug 不會強制切換模式。" },
         debug: {
           type: "boolean",
           description: "When true, record Playwright debug artifacts for every batch item."
@@ -186,12 +189,13 @@ export class MinimalMcpServer {
           }
         }
       }, ["items"]),
-      handler: ({ items, debug, continueOnError, parallelism, retryEnabled, maxRetries, retryDelaySeconds }) => {
+      handler: ({ items, debug, browserMode, continueOnError, parallelism, retryEnabled, maxRetries, retryDelaySeconds }) => {
         const config = loadConfig();
         const workerStorageStatePaths = Object.fromEntries(
           EBAS_WORKER_IDS.map((workerId) => [workerId, resolveEbasWorkerStorageStatePath(config, workerId)])
         );
         return this.service.createBatchDownloadTask(normalizeBatchItems(items), {
+          browserMode: browserMode as "headed" | "headless" | undefined,
           debugEnabled: debug === true,
           continueOnError: continueOnError !== false,
           parallelism: Number(parallelism ?? 1),
@@ -238,6 +242,9 @@ export class MinimalMcpServer {
       }, ["taskId"]),
       handler: ({ taskId }) => this.service.getBatchDownloadResult(String(taskId))
     });
+
+    this.addTool({ name: "cancel_download_task", description: "中斷單筆下載，保留已完成檔案。", inputSchema: objectSchema({ taskId: { type: "string" } }, ["taskId"]), handler: ({ taskId }) => this.service.cancelDownloadTask(String(taskId)) });
+    this.addTool({ name: "cancel_batch_download_task", description: "中斷批次下載，停止重試與未執行項目，保留已完成檔案。", inputSchema: objectSchema({ taskId: { type: "string" } }, ["taskId"]), handler: ({ taskId }) => this.service.cancelBatchDownloadTask(String(taskId)) });
 
     this.addTool({
       name: "parse_download_file",

@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { chromium } from "playwright";
+import { chromium as baseChromium } from "playwright";
+import { prepareStudioChromium } from "./stealth.ts";
 
 const workflow = JSON.parse(await fs.readFile(new URL("./workflow.json", import.meta.url), "utf8")) as any;
 const input = await fs.readFile("./parameters.json", "utf8").then((text) => JSON.parse(text)).catch(() => ({}));
@@ -11,6 +12,7 @@ const params = Object.fromEntries(workflow.parameters.map((item: any) => [item.n
 const variables: Record<string, string | boolean> = {};
 const artifactDir = path.resolve("./artifacts", new Date().toISOString().replace(/[:.]/g, "-"));
 await fs.mkdir(artifactDir, { recursive: true });
+const pdfDownloadDir = path.resolve(process.env.DOWNLOAD_DIR?.trim() || "./downloads");
 const humanizedPlayback = workflow.settings.humanizedPlayback === true;
 
 const ensurePdfDownloadPreference = async (userDataDir: string): Promise<void> => {
@@ -40,6 +42,8 @@ const launchOptions: any = {
   executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined
 };
 const cdpMode = workflow.browser.connectionMode === "cdp";
+const chromium = await prepareStudioChromium({ chromium: baseChromium }, workflow.browser);
+if (workflow.browser.stealth === true) console.log(cdpMode ? "[Stealth] CDP 不套用 Stealth" : "[Stealth] 已啟用");
 let browser: any;
 let context: any;
 let page: any;
@@ -186,7 +190,7 @@ const locate = async (step: any, override?: any[]): Promise<any> => {
       else if (rule.strategy === "name") locator = scope.locator(`[name=${JSON.stringify(value)}]`);
       else if (rule.strategy === "xpath") locator = scope.locator(`xpath=${value}`);
       else locator = scope.locator(value);
-      const visible = locator.filter({ visible: true });
+      const visible = step.kind === "upload" ? locator : locator.filter({ visible: true });
       const count = await visible.count();
       if (count > 0) {
         const mode = step.matchMode ?? "unique";
@@ -212,6 +216,7 @@ const locate = async (step: any, override?: any[]): Promise<any> => {
 };
 const waitFor = async (rule: any, autoFrameSearch = false): Promise<void> => {
   if (!rule) return;
+  autoFrameSearch = autoFrameSearch || rule.autoFrameSearch === true;
   const timeout = rule.timeoutMs ?? workflow.browser.defaultTimeoutMs;
   const expanded = expand(rule.value);
   const value = ["visible", "hidden", "attached"].includes(rule.kind) ? stableCss(expanded) : expanded;
@@ -261,10 +266,20 @@ const verify = async (step: any): Promise<void> => {
   if (rule.kind === "visible" || rule.kind === "hidden") await locator.waitFor({ state: rule.kind, timeout });
   else if (rule.kind === "exists" && !(await locator.count())) throw new Error("驗證失敗：元件不存在");
   else if (rule.kind === "value") {
-    const actual = await locator.inputValue();
+    const deadline = Date.now() + timeout;
+    let actual = await locator.inputValue();
+    while (actual !== String(expected ?? "") && Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(200, Math.max(1, deadline - Date.now())));
+      actual = await locator.inputValue();
+    }
     if (actual !== String(expected ?? "")) throw new Error(`欄位值驗證失敗。預期 ${expected}，實際 ${actual}`);
   } else if (rule.kind === "text") {
-    const actual = (await locator.textContent())?.trim() ?? "";
+    const deadline = Date.now() + timeout;
+    let actual = (await locator.textContent())?.trim() ?? "";
+    while (!actual.includes(String(expected ?? "")) && Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(200, Math.max(1, deadline - Date.now())));
+      actual = (await locator.textContent())?.trim() ?? "";
+    }
     if (!actual.includes(String(expected ?? ""))) throw new Error(`文字驗證失敗。預期 ${expected}，實際 ${actual}`);
   } else if (rule.kind === "checked" && (await locator.isChecked()) !== Boolean(expected)) {
     throw new Error(`勾選狀態驗證失敗。預期 ${expected}`);
@@ -338,6 +353,25 @@ const safeFile = (value: string): string => {
   if (cleaned.length <= maximum) return cleaned;
   if (extension && extension.length < maximum) return `${base.slice(0, maximum - extension.length)}${extension}`;
   return base.slice(0, maximum) || "artifact";
+};
+const pagePdfFilename = (configured: string, fallback: string, useLocalTime: boolean): string => {
+  const lastPart = String(configured || fallback || "page").trim().split(/[\\/]/).at(-1) || "page";
+  const safe = lastPart.replace(/[<>:"|?*\x00-\x1f]/g, "-").replace(/[. ]+$/g, "").trim();
+  const base = (safe.replace(/\.pdf$/i, "").replace(/\.[^.]+$/, "").replace(/[_-]\d{8}_\d{6}$/, "").trim() || "page").slice(0, 150);
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  return safeFile(`${base}${useLocalTime ? `_${timestamp}` : ""}.pdf`);
+};
+const nextPdfPath = async (fileName: string): Promise<string> => {
+  await fs.mkdir(pdfDownloadDir, { recursive: true });
+  const extension = path.extname(fileName);
+  const base = extension ? fileName.slice(0, -extension.length) : fileName;
+  for (let index = 1; index < 10000; index += 1) {
+    const candidate = path.join(pdfDownloadDir, index === 1 ? fileName : `${base} (${index})${extension}`);
+    try { await fs.access(candidate); } catch { return candidate; }
+  }
+  throw new Error("無法在預設下載資料夾中取得可用的 PDF 檔名。");
 };
 
 function decodedDownloadNameFromUrl(url: string): string {
@@ -1002,6 +1036,34 @@ const executeStep = async (step: any): Promise<void> => {
     variables[outputName] = match[group];
   } else if (step.kind === "clipboard") await writeClipboard(expand(step.value || ""));
   else if (step.kind === "download") await event("download", { stepId: step.id, file: await downloadFrom(step) });
+  else if (step.kind === "savePagePdf") {
+    if (typeof page.pdf !== "function") throw new Error("保存頁面 PDF 需要 Chromium／Chrome 瀏覽器分頁；目前連線不支援原生列印 PDF。");
+    const fileName = pagePdfFilename(expand(step.pdfFileName || ""), String(step.name || step.id), step.pdfUseLocalTime !== false);
+    const filePath = await nextPdfPath(fileName);
+    const margin = (value: unknown) => `${Math.min(50, Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 10))}mm`;
+    const scale = (value: unknown) => Math.min(2, Math.max(0.1, Number.isFinite(Number(value)) ? Number(value) : 1));
+    let viewportPrintStyle: any;
+    if (step.pdfFullPage === false) {
+      const viewportHeight = await page.evaluate(() => Math.max(1, window.innerHeight));
+      viewportPrintStyle = await page.addStyleTag({ content: `@media print { html, body { height: ${viewportHeight}px !important; max-height: ${viewportHeight}px !important; overflow: hidden !important; } }` });
+    }
+    try {
+      await page.pdf({
+        path: filePath,
+        format: step.pdfPageSize === "Letter" ? "Letter" : "A4",
+        landscape: step.pdfOrientation === "landscape",
+        printBackground: step.pdfPrintBackground === true,
+        displayHeaderFooter: step.pdfDisplayHeaderFooter === true,
+        headerTemplate: expand(step.pdfHeaderTemplate || "") || undefined,
+        footerTemplate: expand(step.pdfFooterTemplate || "") || undefined,
+        scale: scale(step.pdfScale),
+        margin: { top: margin(step.pdfMarginTopMm), right: margin(step.pdfMarginRightMm), bottom: margin(step.pdfMarginBottomMm), left: margin(step.pdfMarginLeftMm) }
+      });
+    } finally {
+      if (viewportPrintStyle) await viewportPrintStyle.evaluate((element: Element) => element.remove()).catch(() => undefined);
+    }
+    await event("download", { stepId: step.id, file: filePath, source: "page-pdf" });
+  }
   else if (step.kind === "screenshot") await page.screenshot({ path: path.join(artifactDir, expand(step.value || `${step.id}.png`)), fullPage: true });
   else if (step.kind === "script") await page.evaluate((source: string) => (0, eval)(source), expand(step.script ?? step.value));
   else if (step.kind === "condition") await executeSteps((await conditionMatches(step.condition)) ? step.thenSteps ?? [] : step.elseSteps ?? []);
@@ -1028,12 +1090,16 @@ const executeStep = async (step: any): Promise<void> => {
       } else value = await locator.innerText();
       variables[outputName] = value.trim();
     } else {
-    await prepareInteraction(locator, timeout);
+    if (step.kind !== "upload") await prepareInteraction(locator, timeout);
     if (step.kind === "click") await locator.click({ timeout });
     else if (step.kind === "dblclick") await locator.dblclick({ timeout });
     else if (step.kind === "fill") await fillLocator(locator, expand(step.value), timeout);
     else if (step.kind === "select") await locator.selectOption(expand(step.value));
-    else if (step.kind === "upload") await locator.setInputFiles(path.resolve(expand(step.value)));
+    else if (step.kind === "upload") {
+      const files = expand(step.value).split(/\r?\n/).map((file: string) => file.trim()).filter(Boolean);
+      if (!files.length) throw new Error("上傳步驟缺少檔案路徑，請設定完整本機路徑（一行一個）。");
+      await locator.setInputFiles(files.map((file: string) => path.resolve(file)));
+    }
     else if (step.kind === "press") await locator.press(expand(step.value));
     else if (step.kind === "hover") await locator.hover({ timeout });
     else if (step.kind === "check") await locator.check({ timeout });

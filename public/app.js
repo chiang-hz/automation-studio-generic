@@ -134,6 +134,8 @@ function bindActions() {
   $("#allowedDomains").addEventListener("input", () => { syncDomainsFromTextarea(); renderAllowedDomainChips(); });
   $("#startRecorderButton").addEventListener("click", startRecorder);
   $("#focusRecorderButton").addEventListener("click", focusRecorder);
+  $("#pickRecorderAssertionButton").addEventListener("click", () => setRecorderAssertion(true));
+  $("#cancelRecorderAssertionButton").addEventListener("click", () => setRecorderAssertion(false));
   $("#stopRecorderButton").addEventListener("click", stopRecorder);
   $("#clearProfileButton").addEventListener("click", clearBrowserProfile);
   $("#reuseProfile").addEventListener("change", () => {
@@ -141,6 +143,7 @@ function bindActions() {
     markDirty();
   });
   $("#downloadPdfInsteadOfPreview").addEventListener("change", markDirty);
+  $("#stealth").addEventListener("change", markDirty);
   $("#duplicateProjectButton").addEventListener("click", duplicateProject);
   $("#deleteProjectButton").addEventListener("click", deleteProject);
   $("#commitRecordingButton").addEventListener("click", commitRecording);
@@ -157,6 +160,8 @@ function bindActions() {
   $("#enableAllStepsButton").addEventListener("click", () => setAllStepsEnabled(true));
   $("#disableAllStepsButton").addEventListener("click", () => setAllStepsEnabled(false));
   $("#workflowCanvas").addEventListener("click", handleCanvasClick);
+  $("#stepProperties").addEventListener("input", markStepPropertiesPending);
+  $("#stepProperties").addEventListener("change", markStepPropertiesPending);
   $("#workflowCanvas").addEventListener("dragstart", handleStepDragStart);
   $("#workflowCanvas").addEventListener("dragover", handleStepDragOver);
   $("#workflowCanvas").addEventListener("drop", handleStepDrop);
@@ -183,6 +188,7 @@ function bindActions() {
   $("#batchBody").addEventListener("change", handleBatchParameterChange);
   $("#batchBody").addEventListener("click", handleBatchClick);
   $("#maxRetries").addEventListener("change", saveAdvancedSettings);
+  $("#defaultConcurrency").addEventListener("change", saveAdvancedSettings);
   $("#safePlayback").addEventListener("change", saveAdvancedSettings);
   $("#humanizedPlayback").addEventListener("change", saveAdvancedSettings);
   $("#minStepDelayMs").addEventListener("change", saveAdvancedSettings);
@@ -298,11 +304,13 @@ function renderProject() {
   $("#projectAdapter").value = state.project.adapter;
   $("#reuseProfile").checked = state.project.browser.reuseProfile;
   $("#downloadPdfInsteadOfPreview").checked = state.project.browser.downloadPdfInsteadOfPreview === true;
+  $("#stealth").checked = state.project.browser.stealth === true;
   $("#headless").checked = state.project.browser.headless;
   if ($("#aiWorkflowTargetUrl") && !$("#aiWorkflowTargetUrl").value.trim()) $("#aiWorkflowTargetUrl").value = state.project.targetUrl ?? "";
   renderBrowserConnectionSettings();
   renderCdpResult(null);
   $("#maxRetries").value = state.project.settings.maxRetries;
+  renderBatchConcurrency();
   $("#safePlayback").checked = state.project.settings.safePlayback !== false;
   $("#humanizedPlayback").checked = state.project.settings.humanizedPlayback === true;
   $("#minStepDelayMs").value = state.project.settings.minStepDelayMs ?? 2000;
@@ -329,7 +337,7 @@ function renderProjectSelect() {
 }
 
 async function saveProject(options = {}) {
-  if (!state.project) return;
+  if (!state.project) return false;
   const quiet = options?.quiet === true;
   setSaveState("儲存中…");
   try {
@@ -344,9 +352,11 @@ async function saveProject(options = {}) {
     renderRawJson();
     setSaveState("所有變更已儲存");
     if (!quiet) toast("專案已儲存");
+    return true;
   } catch (error) {
     setSaveState("儲存失敗");
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -414,7 +424,7 @@ async function importProjectFile(event) {
 }
 
 async function saveWorkstation() {
-  if (!state.project) return;
+  if (!state.project) return false;
   try {
     new URL($("#projectUrl").value.trim());
     state.project.name = $("#projectName").value.trim();
@@ -430,12 +440,15 @@ async function saveWorkstation() {
     state.project.browser.cdpInitialPageTarget = $("#cdpInitialPageTarget").value.trim();
     state.project.browser.cdpInitialPageIndex = Math.max(1, Number($("#cdpInitialPageIndex").value || 1));
     state.project.adapter = $("#projectAdapter").value;
+    state.project.browser.stealth = $("#stealth").checked;
     state.project.browser.reuseProfile = $("#reuseProfile").checked;
     state.project.browser.downloadPdfInsteadOfPreview = $("#downloadPdfInsteadOfPreview").checked;
     state.project.browser.headless = $("#headless").checked;
-    await saveProject();
+    const saved = await saveProject();
+    if (!saved) return false;
     await refreshProfileStatus();
-  } catch (error) { toast(error.message, true); }
+    return true;
+  } catch (error) { toast(error.message, true); return false; }
 }
 
 function renderBrowserConnectionSettings() {
@@ -443,12 +456,14 @@ function renderBrowserConnectionSettings() {
   $("#cdpSettings").hidden = !cdp;
   $("#browserChannelField").hidden = cdp;
   $("#startRecorderButton").textContent = cdp ? "接管 Chrome 並錄製" : "啟動瀏覽器並錄製";
+  $("#stealth").disabled = cdp;
   $("#reuseProfileField").hidden = cdp;
   $("#headlessField").hidden = cdp;
   const pageMode = $("#cdpInitialPageMode")?.value ?? "first";
   $("#cdpTargetField").hidden = pageMode !== "url";
   $("#cdpIndexField").hidden = pageMode !== "index";
   if (state.project) state.project.browser.connectionMode = cdp ? "cdp" : "managed";
+  renderBatchConcurrency();
   renderProfileStatus(cdp ? { cdp: true } : (state.profileStatus ?? { enabled: $("#reuseProfile")?.checked, hasData: false }));
 }
 
@@ -602,10 +617,10 @@ async function deleteProject() {
   } catch (error) { toast(error.message, true); }
 }
 
-async function startRecorder() {
+async function startRecorder(options = {}) {
   if (!state.project) return;
   try {
-    await saveWorkstation();
+    if (options.save !== false && !(await saveWorkstation())) return;
     const response = await api(`/api/studio/projects/${encodeURIComponent(state.project.id)}/recorder/start`, { method: "POST" });
     resetRecorderSnapshot(false);
     $("#workstationBadge").textContent = "錄製中";
@@ -617,6 +632,15 @@ async function startRecorder() {
       const attached = $("#browserConnectionMode").value === "cdp";
       toast(attached ? `已接管現有 Chrome 並開始錄製：${response.url ?? "目前分頁"}` : `錄製瀏覽器已開啟並進入 ${response.url ?? "目標網址"}（${response.browserSource ?? "已選擇瀏覽器"}）`);
     }
+  } catch (error) { toast(error.message, true); }
+}
+
+async function setRecorderAssertion(pick) {
+  if (!state.project) return;
+  try {
+    await api(`/api/studio/projects/${encodeURIComponent(state.project.id)}/recorder/assertion`, { method: "POST", body: JSON.stringify({ mode: pick ? $("#recorderAssertionKind").value : null }) });
+    $("#recorderAssertionHint").textContent = pick ? "請在錄製視窗點選元素；本次點擊只建立驗證。可按 Esc 或取消選取。" : "已取消驗證選取，可繼續錄製操作。";
+    if (pick) await focusRecorder();
   } catch (error) { toast(error.message, true); }
 }
 
@@ -820,10 +844,13 @@ function renderRecorder(status) {
   $("#workstationBadge").textContent = status.active ? "錄製中" : "未啟動";
   $("#workstationBadge").className = `badge ${status.active ? "running" : "neutral"}`;
   $("#recordingCount").textContent = status.events?.length ?? 0;
+  $("#recorderAssertionHint").textContent = status.assertionMode ? "請在錄製視窗點選元素；本次點擊只建立驗證。可按 Esc 或取消選取。" : "支援 Enter／Tab／快捷鍵與上傳錄製；上傳步驟需補完整路徑後啟用。";
+  $("#pickRecorderAssertionButton").disabled = !status.active;
+  $("#cancelRecorderAssertionButton").disabled = !status.active || !status.assertionMode;
   $("#recordingList").className = status.events?.length ? "recording-list" : "recording-list empty-state compact";
   $("#recordingList").innerHTML = status.events?.length ? status.events.map((event) => {
     const firstSelector = recorderSelectorList(event)[0];
-    return `<article class="recording-event"><b>${escapeHtml(event.type.toUpperCase())} · ${escapeHtml(event.label)}</b><span>${escapeHtml(firstSelector?.strategy ?? "-")}：${escapeHtml(firstSelector?.value ?? "-")}${event.frameUrl ? ` · Frame: ${escapeHtml(event.frameUrl)}` : ""}</span></article>`;
+    return `<article class="recording-event"><b>${escapeHtml(event.type.toUpperCase())} · ${escapeHtml(event.label)}</b><span>${escapeHtml(firstSelector?.strategy ?? "-")}：${escapeHtml(firstSelector?.value ?? "-")}${event.frameUrl ? ` · Frame: ${escapeHtml(event.frameUrl)}` : ""}${event.type === "press" ? ` · ${escapeHtml(event.value ?? "")}` : ""}${event.type === "upload" ? " · 待補完整路徑，步驟預設停用" : ""}${event.type === "assert" ? ` · ${escapeHtml(event.verification?.kind ?? "")}` : ""}</span></article>`;
   }).join("") : "尚未錄製任何操作。";
   const location = $("#recordingLocation");
   const health = status.frameHealth;
@@ -898,6 +925,7 @@ function handleCanvasClick(event) {
   if (!card) return;
   const id = card.dataset.stepId;
   const action = event.target.closest("[data-step-action]")?.dataset.stepAction;
+  if (!applyPendingStepProperties()) return;
   if (!action) {
     state.selectedStepId = id;
     renderDesigner();
@@ -1048,10 +1076,10 @@ function handleDesignerShortcut(event) {
 function addStep(kind) {
   if (!state.project) return;
   const id = `step-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  const names = { navigate: "開啟網址", newTab: "開新分頁", switchTab: "切換至指定分頁", manual: "人工操作", click: "點擊元件", dblclick: "雙擊元件", extractText: "擷取文字", extractPattern: "擷取樣式", clipboard: "複製至剪貼簿", fill: "填入欄位", select: "選擇選項", upload: "上傳檔案", press: "鍵盤按鍵", hover: "移至元件", check: "勾選項目", wait: "等待頁面", waitNewFirst: "等待第一筆新資料", captureListSnapshot: "擷取清單快照", waitNewListItem: "等待清單新資料", assert: "驗證結果", download: "下載檔案", condition: "條件分支", loop: "迴圈處理" };
+  const names = { navigate: "開啟網址", newTab: "開新分頁", switchTab: "切換至指定分頁", manual: "人工操作", click: "點擊元件", dblclick: "雙擊元件", extractText: "擷取文字", extractPattern: "擷取樣式", clipboard: "複製至剪貼簿", fill: "填入欄位", select: "選擇選項", upload: "上傳檔案", press: "鍵盤按鍵", hover: "移至元件", check: "勾選項目", wait: "等待頁面", waitNewFirst: "等待第一筆新資料", captureListSnapshot: "擷取清單快照", waitNewListItem: "等待清單新資料", assert: "驗證結果", download: "下載檔案", savePagePdf: "保存頁面 PDF", condition: "條件分支", loop: "迴圈處理" };
   const step = {
     id, name: names[kind] ?? "新步驟", kind, enabled: true, adapter: "generic", retryCount: 1,
-    selectors: ["navigate", "newTab", "switchTab", "manual", "wait", "condition", "loop", "extractPattern", "clipboard"].includes(kind) ? [] : [{ strategy: "role", role: kind === "fill" ? "textbox" : "button", value: "" }]
+    selectors: ["navigate", "newTab", "switchTab", "manual", "wait", "condition", "loop", "extractPattern", "clipboard", "savePagePdf"].includes(kind) ? [] : [{ strategy: "role", role: kind === "fill" ? "textbox" : "button", value: "" }]
   };
   if (kind === "navigate") step.url = state.project.targetUrl;
   if (kind === "newTab") { step.url = "https://"; step.tabName = "new-tab"; }
@@ -1065,6 +1093,7 @@ function addStep(kind) {
   if (kind === "captureListSnapshot") { step.outputVariable = "mailBaselineSet"; step.listLimit = 20; step.matchMode = "first"; step.timeoutMs = 30000; }
   if (kind === "waitNewListItem") { step.sourceVariable = "mailBaselineSet"; step.outputVariable = "latestNewItem"; step.regexPattern = ""; step.regexFlags = "i"; step.listLimit = 20; step.clickOnMatch = true; step.timeoutMs = 180000; }
   if (kind === "assert") step.verification = { kind: "visible" };
+  if (kind === "savePagePdf") Object.assign(step, { pdfFileName: "", pdfPageSize: "A4", pdfOrientation: "portrait", pdfPrintBackground: false, pdfMarginTopMm: 10, pdfMarginRightMm: 10, pdfMarginBottomMm: 10, pdfMarginLeftMm: 10, pdfDisplayHeaderFooter: false, pdfHeaderTemplate: "", pdfFooterTemplate: "", pdfScale: 1, pdfFullPage: true, pdfUseLocalTime: true });
   if (kind === "condition") { step.condition = { source: "parameter", operator: "equals", name: "", value: "" }; step.thenSteps = []; step.elseSteps = []; }
   if (kind === "loop") { step.loopVariable = "item"; step.loopValues = [""]; step.steps = []; }
   state.project.steps.push(step);
@@ -1082,17 +1111,18 @@ function renderStepProperties() {
     return;
   }
   container.className = "properties-form";
+  container.dataset.pendingEdits = "false";
   $("#selectedStepHint").textContent = `${step.id} · ${stepKindWrite(step.kind)}`;
   container.innerHTML = `
     <label class="field"><span>步驟名稱</span><input id="stepName" value="${escapeHtml(step.name)}" /></label>
     <div class="inline-grid">
       <label class="field"><span>動作</span><select id="stepKind">${stepOptions(step.kind)}</select></label>
-      <label class="field"><span>Adapter</span><select id="stepAdapter">${adapterOptions(step.adapter ?? state.project.adapter)}</select></label>
+      ${step.kind === "savePagePdf" ? "" : `<label class="field"><span>Adapter</span><select id="stepAdapter">${adapterOptions(step.adapter ?? state.project.adapter)}</select></label>`}
     </div>
-    ${step.kind === "switchTab" ? "" : `<label class="field"><span>${step.kind === "manual" ? "人工操作說明" : step.kind === "clipboard" ? "要複製的文字／變數" : "網址／輸入值"}</span><input id="stepValue" value="${escapeHtml(step.url ?? String(step.value ?? ""))}" placeholder="可使用 {{參數Key}}" /></label>`}
+    ${step.kind === "savePagePdf" ? "" : step.kind === "upload" ? `<label class="field"><span>上傳檔案完整路徑（一行一個）</span><textarea id="stepValue" placeholder="例如完整本機路徑">${escapeHtml(String(step.value ?? ""))}</textarea><small>${escapeHtml(step.description ?? "支援多檔，每行填入一個完整路徑；可使用參數。")}</small></label>` : step.kind === "switchTab" ? "" : `<label class="field"><span>${step.kind === "manual" ? "人工操作說明" : step.kind === "clipboard" ? "要複製的文字／變數" : "網址／輸入值"}</span><input id="stepValue" value="${escapeHtml(step.url ?? String(step.value ?? ""))}" placeholder="可使用 {{參數Key}}" /></label>`}
     ${kindSpecificFields(step)}
     ${["navigate","newTab"].includes(step.kind) ? navigateDomainStatus(step) : ""}
-    ${selectorMatchFields(step)}
+    ${step.kind === "savePagePdf" ? "" : `${selectorMatchFields(step)}
     <label class="field"><span>定位方式（依序備援）</span><textarea id="stepSelectors" spellcheck="false">${escapeHtml(JSONTape(step.selectors ?? []))}</textarea><small>JSON 陣列；role、label、name、text、css、xpath、component。</small></label>
     <label class="field"><span>元件物件路徑</span><input id="componentPath" value="${escapeHtml(step.componentPath ?? "")}" placeholder="例如 q.q_year 或 mst1.code_level" /></label>
     <div class="inline-grid">
@@ -1104,7 +1134,7 @@ function renderStepProperties() {
       <label class="field"><span>完成後等待</span><select id="waitKind">${waitOptions(step.waitAfter?.kind ?? "timeout")}</select></label>
       <label class="field"><span>等待值／毫秒</span><input id="waitValue" value="${escapeHtml(step.waitAfter?.value ?? String(step.waitAfter?.timeoutMs ?? ""))}" /></label>
     </div>
-    ${step.kind === "manual" ? "" : `<div class="inline-grid"><label class="field"><span>完成驗證</span><select id="verifyKind"><option value="">不驗證</option>${verifyOptions(step.verification?.kind)}</select></label><label class="field"><span>預期值</span><input id="verifyExpected" value="${escapeHtml(String(step.verification?.expected ?? ""))}" /></label></div>`}
+    ${step.kind === "manual" ? "" : `<div class="inline-grid"><label class="field"><span>完成驗證</span><select id="verifyKind"><option value="">不驗證</option>${verifyOptions(step.verification?.kind)}</select></label><label class="field"><span>預期值</span><input id="verifyExpected" value="${escapeHtml(String(step.verification?.expected ?? ""))}" /></label></div>`}`}
     <label class="switch-field"><input id="stepEnabled" type="checkbox" ${step.enabled ? "checked" : ""} /><span><b>啟用此步驟</b></span></label>
     <div class="action-row"><button class="button primary small" id="saveStepButton" type="button">套用步驟</button><button class="button secondary small" id="duplicateStepButton" type="button">複製步驟</button><button class="button danger-subtle small" id="deleteStepButton" type="button">刪除</button></div><small class="shortcut-hint">快捷鍵：Ctrl+Shift+D 複製 · Alt+↑/↓ 移動 · Delete 刪除</small>
   `;
@@ -1125,6 +1155,11 @@ function renderStepProperties() {
   });
   $("#downloadNameMode")?.addEventListener("change", (event) => {
     $("#downloadFileName").disabled = event.target.value !== "custom";
+  });
+  $("#pdfDisplayHeaderFooter")?.addEventListener("change", (event) => {
+    const disabled = event.target.checked !== true;
+    $("#pdfHeaderTemplate").disabled = disabled;
+    $("#pdfFooterTemplate").disabled = disabled;
   });
   $$('[data-add-child]', container).forEach((button) => button.addEventListener("click", () => addNestedStep(step, button.dataset.addChild)));
 }
@@ -1152,7 +1187,7 @@ function changeSelectedStepKind(event) {
   const waitKind = $("#waitKind")?.value;
   const waitValue = $("#waitValue")?.value.trim() ?? "";
   step.waitAfter = waitValue
-    ? (waitKind === "timeout" ? { kind: "timeout", timeoutMs: Number(waitValue) || 1000 } : { kind: waitKind, value: waitValue })
+    ? (waitKind === "timeout" ? { kind: "timeout", timeoutMs: Number(waitValue) || 1000 } : { kind: waitKind, value: waitValue, ...(step.waitAfter?.autoFrameSearch ? { autoFrameSearch: true } : {}) })
     : undefined;
   const verifyKind = $("#verifyKind")?.value;
   step.verification = verifyKind
@@ -1191,6 +1226,9 @@ function changeSelectedStepKind(event) {
   if (nextKind === "navigate" || nextKind === "newTab") {
     step.url = formValue || (nextKind === "navigate" ? state.project.targetUrl : "https://");
     delete step.value;
+  } else if (nextKind === "savePagePdf") {
+    delete step.value;
+    delete step.url;
   } else {
     step.value = previousKind === "navigate" ? "" : formValue;
     delete step.url;
@@ -1208,6 +1246,7 @@ function changeSelectedStepKind(event) {
   }
   if (nextKind === "assert") step.verification ??= { kind: "visible" };
   if (nextKind === "download") { step.downloadMode ??= "auto"; step.downloadFileNameMode ??= "original"; }
+  if (nextKind === "savePagePdf") Object.assign(step, { pdfFileName: step.pdfFileName ?? "", pdfPageSize: step.pdfPageSize ?? "A4", pdfOrientation: step.pdfOrientation ?? "portrait", pdfPrintBackground: step.pdfPrintBackground ?? false, pdfMarginTopMm: step.pdfMarginTopMm ?? 10, pdfMarginRightMm: step.pdfMarginRightMm ?? 10, pdfMarginBottomMm: step.pdfMarginBottomMm ?? 10, pdfMarginLeftMm: step.pdfMarginLeftMm ?? 10, pdfDisplayHeaderFooter: step.pdfDisplayHeaderFooter ?? false, pdfHeaderTemplate: step.pdfHeaderTemplate ?? "", pdfFooterTemplate: step.pdfFooterTemplate ?? "", pdfScale: step.pdfScale ?? 1, pdfFullPage: step.pdfFullPage ?? true, pdfUseLocalTime: step.pdfUseLocalTime ?? true });
   if (nextKind === "condition") {
     step.condition ??= { source: "parameter", operator: "equals", name: "", value: "" };
     step.thenSteps ??= [];
@@ -1222,25 +1261,36 @@ function changeSelectedStepKind(event) {
   renderDesigner();
 }
 
+function markStepPropertiesPending() {
+  const container = $("#stepProperties");
+  if (container?.querySelector("#stepKind")) container.dataset.pendingEdits = "true";
+}
+
+function applyPendingStepProperties() {
+  const container = $("#stepProperties");
+  if (container?.dataset.pendingEdits !== "true") return true;
+  return saveStepProperties() !== false;
+}
+
 function saveStepProperties() {
   const step = findStepById(state.project.steps, state.selectedStepId);
-  if (!step) return;
+  if (!step) return false;
   try {
     step.name = $("#stepName").value.trim() || "未命名步驟";
     step.kind = $("#stepKind").value;
-    step.adapter = $("#stepAdapter").value;
+    step.adapter = $("#stepAdapter")?.value || step.adapter || "generic";
     const value = $("#stepValue")?.value ?? String(step.value ?? step.url ?? "");
-    if (step.kind === "navigate" || step.kind === "newTab") { step.url = value; delete step.value; } else { step.value = value; delete step.url; }
-    step.selectors = JSON.parse($("#stepSelectors").value || "[]");
+    if (step.kind === "navigate" || step.kind === "newTab") { step.url = value; delete step.value; } else if (step.kind === "savePagePdf") { delete step.value; delete step.url; } else { step.value = value; delete step.url; }
+    step.selectors = JSON.parse($("#stepSelectors")?.value || "[]");
     step.matchMode = $("#stepMatchMode")?.value || "unique";
     step.matchIndex = step.matchMode === "nth" ? Math.max(1, Number($("#stepMatchIndex")?.value) || 1) : undefined;
-    step.componentPath = $("#componentPath").value.trim() || undefined;
-    step.frame = $("#frameUrl").value.trim() ? { urlIncludes: $("#frameUrl").value.trim() } : undefined;
+    step.componentPath = $("#componentPath")?.value.trim() || undefined;
+    step.frame = $("#frameUrl")?.value.trim() ? { urlIncludes: $("#frameUrl").value.trim() } : undefined;
     step.autoFrameSearch = $("#autoFrameSearch")?.checked === true;
-    step.timeoutMs = Number($("#stepTimeout").value) || undefined;
-    const waitKind = $("#waitKind").value;
-    const waitValue = $("#waitValue").value.trim();
-    step.waitAfter = waitValue ? (waitKind === "timeout" ? { kind: "timeout", timeoutMs: Number(waitValue) || 1000 } : { kind: waitKind, value: waitValue }) : undefined;
+    step.timeoutMs = Number($("#stepTimeout")?.value) || undefined;
+    const waitKind = $("#waitKind")?.value;
+    const waitValue = $("#waitValue")?.value.trim() ?? "";
+    step.waitAfter = waitValue ? (waitKind === "timeout" ? { kind: "timeout", timeoutMs: Number(waitValue) || 1000 } : { kind: waitKind, value: waitValue, ...(step.waitAfter?.autoFrameSearch ? { autoFrameSearch: true } : {}) }) : undefined;
     const verifyKind = $("#verifyKind")?.value;
     step.verification = verifyKind ? { kind: verifyKind, expected: $("#verifyExpected")?.value ?? "", selector: step.selectors } : undefined;
     step.enabled = $("#stepEnabled").checked;
@@ -1316,6 +1366,31 @@ function saveStepProperties() {
       if (step.downloadFileNameMode === "custom" && !downloadName) throw new Error("請填入自訂下載檔名。");
       step.downloadFileName = step.downloadFileNameMode === "custom" ? downloadName : undefined;
     }
+    if (step.kind === "savePagePdf") {
+      const margin = (id) => {
+        const raw = $(id)?.value?.trim() ?? "";
+        const value = raw === "" ? 10 : Number(raw);
+        if (!Number.isFinite(value)) throw new Error("PDF 邊界請輸入 0 至 50 mm 的數值。");
+        return Math.round(Math.min(50, Math.max(0, value)) * 10) / 10;
+      };
+      step.pdfFileName = $("#pdfFileName")?.value.trim() || undefined;
+      step.pdfPageSize = $("#pdfPageSize")?.value === "Letter" ? "Letter" : "A4";
+      step.pdfOrientation = $("#pdfOrientation")?.value === "landscape" ? "landscape" : "portrait";
+      step.pdfPrintBackground = $("#pdfPrintBackground")?.checked === true;
+      step.pdfMarginTopMm = margin("#pdfMarginTopMm");
+      step.pdfMarginRightMm = margin("#pdfMarginRightMm");
+      step.pdfMarginBottomMm = margin("#pdfMarginBottomMm");
+      step.pdfMarginLeftMm = margin("#pdfMarginLeftMm");
+      const rawScale = $("#pdfScale")?.value?.trim() ?? "";
+      const scalePercent = rawScale === "" ? 100 : Number(rawScale);
+      if (!Number.isFinite(scalePercent)) throw new Error("PDF 縮放比例請輸入 10% 至 200% 的數值。");
+      step.pdfDisplayHeaderFooter = $("#pdfDisplayHeaderFooter")?.checked === true;
+      step.pdfHeaderTemplate = ($("#pdfHeaderTemplate")?.value ?? "").slice(0, 10_000);
+      step.pdfFooterTemplate = ($("#pdfFooterTemplate")?.value ?? "").slice(0, 10_000);
+      step.pdfScale = Math.round(Math.min(200, Math.max(10, scalePercent)) * 10) / 1000;
+      step.pdfFullPage = $("#pdfFullPage")?.checked === true;
+      step.pdfUseLocalTime = $("#pdfUseLocalTime")?.checked === true;
+    }
     if (step.kind === "condition") {
       step.condition = {
         source: $("#conditionSource")?.value ?? "parameter",
@@ -1332,10 +1407,12 @@ function saveStepProperties() {
       step.loopValues = ($("#loopValues")?.value ?? "").split(/\r?\n|,/).map((value) => value.trim()).filter(Boolean);
       step.steps ??= [];
     }
+    $("#stepProperties").dataset.pendingEdits = "false";
     markDirty();
     renderDesigner();
     toast("步驟設定已套用");
-  } catch (error) { toast(error.message, true); }
+    return true;
+  } catch (error) { toast(error.message, true); return false; }
 }
 
 function deleteStep(id = state.selectedStepId) {
@@ -1388,6 +1465,15 @@ function updateManualCompletionFields() {
 }
 
 function kindSpecificFields(step) {
+  if (step.kind === "savePagePdf") {
+    const pageSize = step.pdfPageSize === "Letter" ? "Letter" : "A4";
+    const orientation = step.pdfOrientation === "landscape" ? "landscape" : "portrait";
+    const marginValue = (value) => Math.min(50, Math.max(0, Number(value ?? 10)));
+    const headerFooterEnabled = step.pdfDisplayHeaderFooter === true;
+    const configuredScale = Number(step.pdfScale ?? 1);
+    const scalePercent = Math.round((Number.isFinite(configuredScale) ? Math.min(2, Math.max(0.1, configuredScale)) : 1) * 100);
+    return `<div class="kind-box pdf-page-settings"><b>頁面 PDF 設定</b><label class="field"><span>檔名</span><input id="pdfFileName" value="${escapeHtml(step.pdfFileName ?? "")}" placeholder="台灣銀行決算_品質檢測結果.pdf" /><small>可使用 {{參數Key}}；系統會自動補上 .pdf 副檔名。</small></label><label class="switch-field"><input id="pdfUseLocalTime" type="checkbox" ${step.pdfUseLocalTime !== false ? "checked" : ""} /><span><b>自動使用本機時間命名</b><small>檔名後附加 YYYYMMDD_HHmmss，例如 _20261007_103000。</small></span></label><div class="inline-grid"><label class="field"><span>紙張大小</span><select id="pdfPageSize">${optionList([["A4","A4"],["Letter","Letter"]], pageSize)}</select></label><label class="field"><span>方向</span><select id="pdfOrientation">${optionList([["portrait","直向"],["landscape","橫向"]], orientation)}</select></label></div><label class="switch-field"><input id="pdfPrintBackground" type="checkbox" ${step.pdfPrintBackground === true ? "checked" : ""} /><span><b>包含背景色與背景圖片</b></span></label><div class="field"><span>邊界（mm）</span><div class="inline-grid pdf-margin-grid"><label class="field"><span>上</span><input id="pdfMarginTopMm" type="number" min="0" max="50" step="0.5" value="${marginValue(step.pdfMarginTopMm)}" /></label><label class="field"><span>右</span><input id="pdfMarginRightMm" type="number" min="0" max="50" step="0.5" value="${marginValue(step.pdfMarginRightMm)}" /></label><label class="field"><span>下</span><input id="pdfMarginBottomMm" type="number" min="0" max="50" step="0.5" value="${marginValue(step.pdfMarginBottomMm)}" /></label><label class="field"><span>左</span><input id="pdfMarginLeftMm" type="number" min="0" max="50" step="0.5" value="${marginValue(step.pdfMarginLeftMm)}" /></label></div></div><label class="switch-field"><input id="pdfDisplayHeaderFooter" type="checkbox" ${headerFooterEnabled ? "checked" : ""} /><span><b>輸出頁首與頁尾</b><small>勾選後套用下方範本；預設不輸出。</small></span></label><label class="field"><span>頁首範本（HTML）</span><textarea id="pdfHeaderTemplate" rows="3" maxlength="10000" spellcheck="false" ${headerFooterEnabled ? "" : "disabled"}>${escapeHtml(step.pdfHeaderTemplate ?? "")}</textarea><small>可用 class：date、title、url、pageNumber、totalPages；空白時頁首留白。需要時請增加上邊界。</small></label><label class="field"><span>頁尾範本（HTML）</span><textarea id="pdfFooterTemplate" rows="3" maxlength="10000" spellcheck="false" ${headerFooterEnabled ? "" : "disabled"}>${escapeHtml(step.pdfFooterTemplate ?? "")}</textarea><small>範本使用獨立列印樣式，不會套用網頁 CSS；可使用 {{參數Key}}。需要時請增加下邊界。</small></label><label class="field"><span>縮放比例（%）</span><input id="pdfScale" type="number" min="10" max="200" step="1" value="${scalePercent}" /><small>可設定 10% 至 200%；預設 100%。</small></label><label class="switch-field"><input id="pdfFullPage" type="checkbox" ${step.pdfFullPage !== false ? "checked" : ""} /><span><b>完整頁面</b><small>勾選時輸出整份文件；取消時僅輸出目前可視範圍。</small></span></label><small>輸出會存至「系統設定」的預設下載資料夾；同名檔案會自動加上序號，不會覆寫。</small></div>`;
+  }
   if (step.kind === "newTab") {
     return `<div class="kind-box"><b>開新分頁</b><label class="field"><span>分頁名稱</span><input id="tabName" value="${escapeHtml(step.tabName ?? "new-tab")}" placeholder="例如 chatgpt-login、webmail" /></label><small>分頁名稱只在目前這次流程執行中使用，之後可用「切換至指定分頁」依名稱切回。</small></div>`;
   }
@@ -1729,6 +1815,7 @@ function renderTestStepSelectionInfo() {
 
 async function runWorkflow(runMode = "full") {
   if (!state.project) return;
+  if (!applyPendingStepProperties()) return;
   const partialRun = runMode === "single-step" || runMode === "from-step";
   if (partialRun && !state.selectedStepId) return toast("請先在流程設計器選取步驟。", true);
   const selectedSteps = selectedTestSteps(runMode);
@@ -1738,7 +1825,7 @@ async function runWorkflow(runMode = "full") {
     showView("workstation");
     return toast(`執行前檢查：請先加入允許網域 ${preflight.missing.join(", ")}`, true);
   }
-  if (state.dirty) await saveProject();
+  if (state.dirty && !(await saveProject())) return;
   try {
     const recorderStatus = await api(`/api/studio/projects/${encodeURIComponent(state.project.id)}/recorder`).catch(() => ({ active: false }));
     const response = await api(`/api/studio/projects/${encodeURIComponent(state.project.id)}/runs`, {
@@ -1812,7 +1899,7 @@ function renderRun(run) {
   const statusBadge = $("#runStatusBadge");
   statusBadge.className = `monitor-status ${run.status}`;
   statusBadge.innerHTML = `${runStatusIconMarkup(run.status)}<b>${escapeHtml(statusLabel(run.status))}</b>`;
-  $("#runMonitorSubtitle").textContent = `${formatDate(run.startedAt)} · ${runModeLabel(run.mode)}`;
+  $("#runMonitorSubtitle").textContent = `${formatDate(run.startedAt)} · ${runModeLabel(run.mode, run.batchWorker)}`;
   const progress = run.totalSteps ? Math.round(run.completedSteps / run.totalSteps * 100) : 0;
   $("#runProgress").style.width = `${progress}%`;
   $("#runProgressPercent").textContent = `${progress}%`;
@@ -2150,7 +2237,18 @@ function renderBatchParameterControl(parameter, value, rowParameters) {
   return `<input data-batch-param="${key}" type="${type}" value="${escapeHtml(String(current ?? ""))}">`;
 }
 
+function renderBatchConcurrency() {
+  if (!state.project) return;
+  const cdp = state.project.browser.connectionMode === "cdp";
+  $("#defaultConcurrency").disabled = cdp;
+  $("#defaultConcurrency").value = cdp ? 1 : Math.max(1, Math.min(3, Math.floor(Number(state.project.settings.defaultConcurrency) || 1)));
+  $("#batchConcurrencyHint").textContent = cdp
+    ? "CDP 接管共用現有瀏覽器，固定依序執行。切換為管理瀏覽器後可選擇 1–3。"
+    : "上限 3；並行使用獨立工作站，首次可能需要分別登入。";
+}
+
 function renderBatch() {
+  renderBatchConcurrency();
   syncBatchRowsWithParameters();
   const parameters = state.project.parameters;
   const empty = state.batchRows.length === 0;
@@ -2198,13 +2296,15 @@ async function runBatch() {
   if (state.dirty) await saveProject();
   try {
     const response = await api(`/api/studio/projects/${encodeURIComponent(state.project.id)}/batch`, { method: "POST", body: JSON.stringify({ rows: activeRows }) });
-    toast(`已建立 ${response.runs.length} 筆任務，將依序執行`);
+    const concurrency = response.concurrency ?? 1;
+    toast(`已建立 ${response.runs.length} 筆任務，${concurrency > 1 ? `最多同時執行 ${concurrency} 筆` : "將依序執行"}`);
     showView("runs");
   } catch (error) { toast(error.message, true); }
 }
 
 async function saveAdvancedSettings() {
   state.project.settings.maxRetries = Number($("#maxRetries").value) || 0;
+  if (state.project.browser.connectionMode !== "cdp") state.project.settings.defaultConcurrency = Math.max(1, Math.min(3, Math.floor(Number($("#defaultConcurrency").value) || 1)));
   state.project.settings.safePlayback = $("#safePlayback").checked;
   state.project.settings.humanizedPlayback = $("#humanizedPlayback").checked;
   state.project.settings.minStepDelayMs = Math.max(500, Math.min(10_000, Number($("#minStepDelayMs").value) || 2_000));
@@ -2383,7 +2483,7 @@ function buildRunHistoryDetailsMarkup(run, debug) {
       <div class="section-heading run-history-heading"><div><h3>${escapeHtml(run.projectName)} · 執行詳情</h3><p>${escapeHtml(run.id)} · 開始 ${formatDate(run.startedAt, true)}${run.endedAt ? ` · 結束 ${formatDate(run.endedAt, true)}` : ""}</p></div><button class="icon-button run-detail-close" data-run-detail-close type="button" aria-label="收合執行詳情">⌃</button></div>
       <div class="run-detail-grid">
         <div class="run-detail-item"><span>狀態</span><div class="run-detail-status ${run.status}">${runStatusIconMarkup(run.status)}<b>${statusLabel(run.status)}</b></div></div>
-        <div class="run-detail-item"><span>執行模式</span><b>${escapeHtml(runModeLabel(run.mode))}</b></div>
+        <div class="run-detail-item"><span>執行模式</span><b>${escapeHtml(runModeLabel(run.mode, run.batchWorker))}</b></div>
         <div class="run-detail-item"><span>完成進度</span><b>${run.completedSteps} / ${run.totalSteps}</b></div>
         <div class="run-detail-item"><span>執行時間</span><b>${formatRunDuration(run.startedAt, run.endedAt ?? run.updatedAt)}</b></div>
       </div>
@@ -2414,7 +2514,7 @@ function renderRuns() {
     const canDelete = isRunHistoryDeletable(run.status);
     const checked = state.selectedRunIds.has(run.id) ? " checked" : "";
     const disabled = canDelete ? "" : " disabled title=\"執行中、等待中或等待人工操作的紀錄受保護\"";
-    const recordRow = `<tr class="run-record-row${selected}" data-run-row="${escapeHtml(run.id)}" title="點選${selected ? "收合" : "展開"}本次執行詳細資訊"><td class="run-select-cell"><input type="checkbox" data-run-select="${escapeHtml(run.id)}" aria-label="選取 ${escapeHtml(run.projectName)} 的執行紀錄"${checked}${disabled}></td><td class="run-time-cell">${formatDate(run.startedAt)}</td><td class="run-project-cell"><b>${escapeHtml(run.projectName)}</b><small title="${escapeHtml(run.id)}">${escapeHtml(run.id)}</small></td><td class="run-mode-cell">${escapeHtml(runModeLabel(run.mode))}</td><td class="run-progress-cell">${run.completedSteps} / ${run.totalSteps}</td><td class="run-status-cell"><span class="badge ${run.status}">${statusLabel(run.status)}</span></td><td class="run-error-cell"><div class="run-error-message" title="${escapeHtml(errorMessage)}">${escapeHtml(errorMessage)}</div></td><td class="run-actions-cell">${action}</td></tr>`;
+    const recordRow = `<tr class="run-record-row${selected}" data-run-row="${escapeHtml(run.id)}" title="點選${selected ? "收合" : "展開"}本次執行詳細資訊"><td class="run-select-cell"><input type="checkbox" data-run-select="${escapeHtml(run.id)}" aria-label="選取 ${escapeHtml(run.projectName)} 的執行紀錄"${checked}${disabled}></td><td class="run-time-cell">${formatDate(run.startedAt)}</td><td class="run-project-cell"><b>${escapeHtml(run.projectName)}</b><small title="${escapeHtml(run.id)}">${escapeHtml(run.id)}</small></td><td class="run-mode-cell">${escapeHtml(runModeLabel(run.mode, run.batchWorker))}</td><td class="run-progress-cell">${run.completedSteps} / ${run.totalSteps}</td><td class="run-status-cell"><span class="badge ${run.status}">${statusLabel(run.status)}</span></td><td class="run-error-cell"><div class="run-error-message" title="${escapeHtml(errorMessage)}">${escapeHtml(errorMessage)}</div></td><td class="run-actions-cell">${action}</td></tr>`;
     if (!selected) return recordRow;
     const detail = state.selectedHistoryRun?.id === run.id ? buildRunHistoryDetailsMarkup(state.selectedHistoryRun, state.selectedHistoryDebug) : buildRunHistoryDetailsMarkup(null, null);
     return `${recordRow}<tr class="run-detail-row" data-run-detail-row="${escapeHtml(run.id)}"><td colspan="8">${detail}</td></tr>`;
@@ -2571,7 +2671,8 @@ function renderRunHistoryDetails() {
   restoreRunHistoryScrollState(scrollState);
 }
 
-function runModeLabel(mode) {
+function runModeLabel(mode, batchWorker) {
+  if (mode === "batch" && batchWorker) return `批次 · 工作站 ${batchWorker}`;
   return ({ full: "完整流程", "single-step": "只執行此步驟", "from-step": "從此步驟執行", batch: "批次" })[mode] ?? mode ?? "—";
 }
 
@@ -2653,6 +2754,7 @@ async function runDashboardProject(projectId, button) {
 }
 
 function renderDashboard() {
+  if (document.documentElement.classList.contains("react-dashboard-active")) return;
   const dashboard = state.dashboard ?? {};
   $("#metricProjects").textContent = dashboard.projectCount ?? 0;
   $("#metricReady").textContent = dashboard.readyCount ?? 0;
@@ -2748,7 +2850,6 @@ function renderSettings() {
   $("#runHistoryRetentionDays").value = settings.runHistoryRetentionDays ?? 30;
   $("#downloadDirectory").value = settings.defaultDownloadDir ?? "./downloads";
   $("#debugRetention").value = settings.debugRetention ?? "failures";
-  $("#autoOpenBrowser").checked = settings.autoOpenBrowser !== false;
   $("#issueReportEmail").value = settings.issueReportEmail ?? "";
   renderDebugCleanupStatus();
   renderRunHistoryCleanupStatus();
@@ -2937,7 +3038,7 @@ function readAISettingsFromForm() {
 function renderAISettingsBadge() { const aiEnabled = $("#aiEnabled")?.checked === true; const id = $("#activeAIProvider")?.value; const card = [...document.querySelectorAll("[data-ai-provider]")].find((x) => x.dataset.aiProvider === id); const ready = aiEnabled && card?.querySelector('[data-ai-field="enabled"]')?.checked === true; $("#aiSettingsBadge").textContent = ready ? "AI 已啟用" : aiEnabled ? "目前 Provider 未啟用" : "AI 未啟用"; $("#aiSettingsBadge").className = `badge ${ready ? "completed" : "neutral"}`; }
 
 async function saveSettings(options = {}) {
-  const settings = { theme: $("#themeSetting").value, retentionDays: Number($("#retentionDays").value) || 30, runHistoryRetentionDays: Number($("#runHistoryRetentionDays").value) || 30, defaultDownloadDir: $("#downloadDirectory").value.trim() || "./downloads", debugRetention: $("#debugRetention").value, autoOpenBrowser: $("#autoOpenBrowser").checked, issueReportEmail: $("#issueReportEmail").value.trim(), ai: readAISettingsFromForm() };
+  const settings = { theme: $("#themeSetting").value, retentionDays: Number($("#retentionDays").value) || 30, runHistoryRetentionDays: Number($("#runHistoryRetentionDays").value) || 30, defaultDownloadDir: $("#downloadDirectory").value.trim() || "./downloads", debugRetention: $("#debugRetention").value, issueReportEmail: $("#issueReportEmail").value.trim(), ai: readAISettingsFromForm() };
   try { const response = await api("/api/studio/settings", { method: "PUT", body: JSON.stringify(settings) }); state.settings = response.settings; applyTheme(settings.theme); renderAISettings(); if (!options.quiet) toast("系統設定已儲存"); return true; } catch (error) { toast(error.message, true); return false; }
 }
 
@@ -3233,7 +3334,7 @@ async function copyAIWorkflowDiagnostic() {
   const e = state.aiWorkflowExploration;
   const provider = activeAIProviderSummary();
   const lines = [
-    `Automation Studio: 1.2.1`,
+    `Automation Studio: 2.0.2`,
     `時間: ${new Date().toISOString()}`,
     `目前階段: ${m?.stageLabel || "—"}`,
     `狀態: ${m?.status || "idle"}`,
@@ -3820,7 +3921,7 @@ function buildIssueReportText() {
     "",
     `問題類別：${category}`,
     `影響程度：${severity}`,
-    `系統版本：V1.2.1`,
+    `系統版本：V2.0.2`,
     `目前專案：${projectName}`,
     `專案 ID：${projectId}`,
     `瀏覽器模式：${browserMode}`,
@@ -3847,7 +3948,7 @@ function buildIssueReportText() {
 function issueReportSubject() {
   const custom = $("#reportSubject")?.value.trim();
   const category = $("#reportCategory")?.value ?? "其他";
-  return custom || `[Automation Studio V1.2.1][${category}] 問題回報`;
+  return custom || `[Automation Studio V2.0.2][${category}] 問題回報`;
 }
 
 async function copyIssueReport() {
@@ -3930,7 +4031,7 @@ async function api(url, options = {}) {
 }
 
 function stepOptions(selected) {
-  return ["navigate","newTab","switchTab","manual","click","dblclick","extractText","extractPattern","clipboard","fill","select","upload","press","hover","check","uncheck","wait","waitNewFirst","captureListSnapshot","waitNewListItem","assert","download","screenshot","script","condition","loop"].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${stepKindWrite(value)}</option>`).join("");
+  return ["navigate","newTab","switchTab","manual","click","dblclick","extractText","extractPattern","clipboard","fill","select","upload","press","hover","check","uncheck","wait","waitNewFirst","captureListSnapshot","waitNewListItem","assert","download","savePagePdf","screenshot","script","condition","loop"].map((value) => `<option value="${value}" ${value === selected ? "selected" : ""}>${stepKindWrite(value)}</option>`).join("");
 }
 
 function adapterOptions(selected) {
@@ -3946,7 +4047,7 @@ function verifyOptions(selected) {
 }
 
 function stepKindWrite(kind) {
-  return ({ navigate:"前往網址", newTab:"開新分頁", switchTab:"切換分頁", manual:"人工操作", click:"點擊", dblclick:"雙擊", extractText:"擷取文字", extractPattern:"擷取樣式", clipboard:"複製剪貼簿", fill:"填入", select:"選擇", upload:"上傳檔案", press:"鍵盤按鍵", hover:"移至元件", check:"勾選", uncheck:"取消勾選", wait:"等待", waitNewFirst:"等待新第一筆", captureListSnapshot:"擷取清單快照", waitNewListItem:"等待清單新資料", assert:"驗證", download:"下載", screenshot:"截圖", script:"頁面腳本", condition:"條件", loop:"迴圈" })[kind] ?? kind;
+  return ({ navigate:"前往網址", newTab:"開新分頁", switchTab:"切換分頁", manual:"人工操作", click:"點擊", dblclick:"雙擊", extractText:"擷取文字", extractPattern:"擷取樣式", clipboard:"複製剪貼簿", fill:"填入", select:"選擇", upload:"上傳檔案", press:"鍵盤按鍵", hover:"移至元件", check:"勾選", uncheck:"取消勾選", wait:"等待", waitNewFirst:"等待新第一筆", captureListSnapshot:"擷取清單快照", waitNewListItem:"等待清單新資料", assert:"驗證", download:"下載", savePagePdf:"保存頁面 PDF", screenshot:"截圖", script:"頁面腳本", condition:"條件", loop:"迴圈" })[kind] ?? kind;
 }
 
 function JSONTape(value) { return JSON.stringify(value, null, 2); }

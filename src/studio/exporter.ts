@@ -23,7 +23,7 @@ export class ExportService {
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "1.2.1",
+        productVersion: "2.0.2",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,
@@ -78,11 +78,13 @@ async function typescriptEntries(project: WorkflowProject, selection: ExportSele
   const base = "typescript-project";
   const templatePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "templates", "generated-runner.ts.txt");
   const runner = await fs.readFile(templatePath, "utf8");
+  const stealthHelper = await fs.readFile(new URL("./stealth.ts", import.meta.url), "utf8");
   const entries: ZipEntry[] = [
-    { name: `${base}/package.json`, data: json({ name: project.id, version: project.version, private: true, type: "module", scripts: { start: "node --experimental-strip-types src/run.ts", test: "node --experimental-strip-types --test tests/*.test.ts" }, dependencies: { playwright: "^1.60.0" } }) },
+    { name: `${base}/package.json`, data: json({ name: project.id, version: project.version, private: true, type: "module", scripts: { start: "node --experimental-strip-types src/run.ts", test: "node --experimental-strip-types --test tests/*.test.ts" }, dependencies: { playwright: "^1.60.0", ...(project.browser.stealth === true && project.browser.connectionMode !== "cdp" ? { "playwright-extra": "^4.3.6", "puppeteer-extra-plugin-stealth": "^2.11.2" } : {}) } }) },
     { name: `${base}/tsconfig.json`, data: json({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true }, include: ["src/**/*.ts", "tests/**/*.ts"] }) },
     { name: `${base}/src/workflow.json`, data: json(project) },
     { name: `${base}/src/run.ts`, data: runner },
+    { name: `${base}/src/stealth.ts`, data: stealthHelper },
     { name: `${base}/src/parameters.ts`, data: generatedParameterTypes(project) },
     { name: `${base}/start.bat`, data: "@echo off\r\nsetlocal\r\nif \"%NODE_USE_SYSTEM_CA%\"==\"\" set \"NODE_USE_SYSTEM_CA=1\"\r\nnode --experimental-strip-types src\\run.ts\r\nif errorlevel 1 pause\r\n" },
     { name: `${base}/README.md`, data: typescriptReadme(project) }
@@ -138,7 +140,7 @@ function portableReadme(project: WorkflowProject): string {
 }
 
 function typescriptReadme(project: WorkflowProject): string {
-  return `# ${project.name}\n\n這是由 Automation Studio 產生的 Playwright TypeScript 專案。\n\n1. 準備 Node.js 與 Playwright。\n2. 將參數放入 \`parameters.json\`，或沿用預設值。\n3. 執行 \`start.bat\`。\n\n登入驗證、MFA 與驗證碼仍須人工完成。\n`;
+  return `# ${project.name}\n\n這是由 Automation Studio 產生的 Playwright TypeScript 專案。\n\n1. 準備 Node.js，於此目錄執行 \`npm install\` 安裝 package.json 所列套件（啟用 Stealth 的管理模式會包含插件）。\n2. 將參數放入 \`parameters.json\`，或沿用預設值。\n3. 執行 \`start.bat\`。\n\nStealth 設定保存於 src/workflow.json 的 browser.stealth；僅管理模式生效，CDP 不套用。設定在瀏覽器啟動前載入。\n\n登入驗證、MFA 與驗證碼仍須人工完成。\n`;
 }
 
 function generatedRunner(project: WorkflowProject): string {

@@ -1,3 +1,5 @@
+import { bindContextCancellation } from "./cancellation.ts";
+import { localFilenameTimestamp } from "../domain/localTimestamp.ts";
 import path from "node:path";
 import type { AppConfig } from "../config.ts";
 import { ErrorCodes, FlowError } from "../domain/errors.ts";
@@ -23,19 +25,21 @@ export class PlaywrightReportAdapter implements ReportAdapter {
   }
 
   async downloadReport(input: DownloadReportInput): Promise<DownloadReportOutput> {
+    input.signal?.throwIfAborted();
     assertReportExists(input.reportId);
     this.assertConfigured();
 
     const { chromium } = await import("playwright");
     const executablePath = await resolveChromiumExecutablePath(this.config);
     const browser = await chromium.launch({
-      headless: this.config.headless,
+      headless: input.browserMode ? input.browserMode === "headless" : this.config.headless,
       ...(executablePath ? { executablePath } : {})
     });
     const context = await browser.newContext({ acceptDownloads: true });
-    const page = await context.newPage();
-
+    const releaseContext = bindContextCancellation(context, input.signal);
     try {
+      input.signal?.throwIfAborted();
+      const page = await context.newPage();
       await page.goto(this.config.targetBaseUrl!, { waitUntil: "domcontentloaded" });
 
       // Replace these selectors with the target site's stable locators.
@@ -52,6 +56,7 @@ export class PlaywrightReportAdapter implements ReportAdapter {
       }
 
       const downloadPromise = page.waitForEvent("download", { timeout: 60_000 });
+      void downloadPromise.catch(() => undefined);
       await page.getByRole("button", { name: /download|export/i }).click();
       const download = await downloadPromise;
 
@@ -69,7 +74,7 @@ export class PlaywrightReportAdapter implements ReportAdapter {
         error
       );
     } finally {
-      await context.close();
+      await releaseContext();
       await browser.close();
     }
   }
@@ -87,7 +92,7 @@ export class PlaywrightReportAdapter implements ReportAdapter {
 function withTimestamp(name: string, extension = path.extname(name)): string {
   const baseName = sanitizeFileName(path.basename(name, path.extname(name)));
   const safeExtension = extension || path.extname(name) || ".xlsx";
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stamp = localFilenameTimestamp();
   return `${baseName}-${stamp}${safeExtension}`;
 }
 

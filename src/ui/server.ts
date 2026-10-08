@@ -17,6 +17,7 @@ import { resolveChromiumExecutablePath } from "../adapters/chromiumExecutable.ts
 import { createReportService } from "../container.ts";
 import { formatToolError, MinimalMcpServer } from "../mcp/server.ts";
 import { createStudioRouter } from "../studio/router.ts";
+import { openInterfaceOnStartup } from "./startup.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "../../public");
@@ -291,6 +292,8 @@ server.on("error", (error: NodeJS.ErrnoException) => {
 
 server.listen(port, () => {
   console.log(`MCP UI ready: http://localhost:${port}`);
+  void openInterfaceOnStartup(port)
+    .catch(() => console.warn(`無法自動開啟介面，請手動開啟 http://127.0.0.1:${port}/`));
 });
 
 async function startManualLogin(workerId = "A"): Promise<Record<string, unknown>> {

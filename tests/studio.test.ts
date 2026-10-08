@@ -704,6 +704,92 @@ test("執行器可建立命名分頁並依名稱切回原分頁", async () => {
   assert.ok(chatPage.foregroundCount() >= 2);
 });
 
+test("保存頁面 PDF 使用系統預設下載資料夾與原生列印選項", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-page-pdf-"));
+  try {
+    const downloadDir = path.join(temporary, "預設下載");
+    const store = { getSettings: async () => ({ defaultDownloadDir: downloadDir }) };
+    const runner = new WorkflowRunner(store as any) as any;
+    const project = createDefaultProject({ name: "PDF 輸出", targetUrl: "https://example.com" });
+    const run: any = { id: "pdf-run", parameters: {}, debugDir: temporary, steps: [] };
+    let pdfOptions: any;
+    const page = {
+      pdf: async (options: any) => {
+        pdfOptions = options;
+        await fs.writeFile(options.path, Buffer.from("%PDF-test"));
+      }
+    };
+
+    const result = await runner.performStep(project, run, {}, page, {
+      id: "save-pdf",
+      name: "保存品質檢測結果",
+      kind: "savePagePdf",
+      enabled: true,
+      pdfFileName: "台灣銀行決算_品質檢測結果.pdf",
+      pdfPageSize: "Letter",
+      pdfOrientation: "landscape",
+      pdfPrintBackground: true,
+      pdfMarginTopMm: 5,
+      pdfMarginRightMm: 6,
+      pdfMarginBottomMm: 7,
+      pdfMarginLeftMm: 8,
+      pdfDisplayHeaderFooter: true,
+      pdfHeaderTemplate: '<div><span class="title"></span></div>',
+      pdfFooterTemplate: '<div><span class="pageNumber"></span></div>',
+      pdfScale: 0.8,
+      pdfUseLocalTime: true
+    }, {});
+
+    assert.ok(result.downloadPath?.startsWith(downloadDir));
+    assert.match(path.basename(result.downloadPath!), /^台灣銀行決算_品質檢測結果_\d{8}_\d{6}\.pdf$/);
+    assert.equal(await fs.readFile(result.downloadPath!, "utf8"), "%PDF-test");
+    assert.equal(pdfOptions.format, "Letter");
+    assert.equal(pdfOptions.landscape, true);
+    assert.equal(pdfOptions.printBackground, true);
+    assert.equal(pdfOptions.displayHeaderFooter, true);
+    assert.equal(pdfOptions.headerTemplate, '<div><span class="title"></span></div>');
+    assert.equal(pdfOptions.footerTemplate, '<div><span class="pageNumber"></span></div>');
+    assert.equal(pdfOptions.scale, 0.8);
+    assert.deepEqual(pdfOptions.margin, { top: "5mm", right: "6mm", bottom: "7mm", left: "8mm" });
+    assert.match(result.message, /Letter、橫向、縮放 80%、頁首／頁尾已啟用/);
+    const generatedRunner = await fs.readFile(path.resolve("src/studio/templates/generated-runner.ts.txt"), "utf8");
+    assert.match(generatedRunner, /displayHeaderFooter: step\.pdfDisplayHeaderFooter === true/);
+    assert.match(generatedRunner, /headerTemplate: expand\(step\.pdfHeaderTemplate/);
+    assert.match(generatedRunner, /scale: scale\(step\.pdfScale\)/);
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("PDF 頁首／頁尾與縮放設定會寫入可攜流程及 TypeScript 匯出", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "automation-studio-pdf-export-"));
+  try {
+    const project = createDefaultProject({ name: "PDF 匯出", targetUrl: "https://example.com" });
+    project.id = `pdf-export-${Date.now()}`;
+    project.steps = [{
+      id: "save-pdf",
+      name: "保存頁面 PDF",
+      kind: "savePagePdf",
+      enabled: true,
+      pdfDisplayHeaderFooter: true,
+      pdfHeaderTemplate: '<div><span class="title"></span></div>',
+      pdfFooterTemplate: '<div><span class="pageNumber"></span>/<span class="totalPages"></span></div>',
+      pdfScale: 1.35
+    }];
+    const service = new ExportService() as any;
+    service.exportDir = temporary;
+    const exported = await service.create(project, { portableWorkflow: true, typescript: true, skill: false });
+    const zip = await fs.readFile(exported.filePath);
+    assert.ok(zip.includes(Buffer.from('"pdfDisplayHeaderFooter": true')));
+    assert.ok(zip.includes(Buffer.from('"pdfHeaderTemplate": "<div><span class=\\"title\\"></span></div>"')));
+    assert.ok(zip.includes(Buffer.from('"pdfScale": 1.35')));
+    assert.ok(zip.includes(Buffer.from("displayHeaderFooter: step.pdfDisplayHeaderFooter === true")));
+    assert.ok(zip.includes(Buffer.from("scale: scale(step.pdfScale)")));
+  } finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
+});
+
 
 test("CDP 模式只允許本機除錯位址", () => {
   assert.equal(validateLocalCdpEndpoint("http://127.0.0.1:9222"), "http://127.0.0.1:9222");
@@ -1046,16 +1132,20 @@ test("v1.0.40 publish autosave, empty batch state, debug tabs and layout refinem
 });
 
 
-test("Automation Studio product metadata is v1.2.1", async () => {
-  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "1.2.1");
+test("Automation Studio product metadata is v2.0.2 and the classic interface is removed", async () => {
+  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.0.2");
   const pkg = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8"));
   const router = await fs.readFile(path.resolve("src/studio/router.ts"), "utf8");
   const exporter = await fs.readFile(path.resolve("src/studio/exporter.ts"), "utf8");
-  assert.equal(pkg.version, "1.2.1");
-  assert.match(router, /version: "1\.2\.1"/);
-  assert.match(exporter, /productVersion: "1\.2\.1"/);
+  assert.equal(pkg.version, "2.0.2");
+  assert.match(pkg.version, /^\d+\.[0-9]\.[0-9]$/);
+  assert.match(router, /version: "2\.0\.2"/);
+  assert.match(exporter, /productVersion: "2\.0\.2"/);
   const versioning = await fs.readFile(path.resolve("VERSIONING.md"), "utf8");
   assert.match(versioning, /MAJOR\.MINOR\.PATCH/);
+  const modernUi = await fs.readFile(path.resolve("frontend/src/main.tsx"), "utf8");
+  assert.doesNotMatch(modernUi, /classic-entry|\/classic\/|舊版介面/);
+  await assert.rejects(fs.access(path.resolve("public/classic")));
 });
 
 test("V1.0.11 局部測試可遞迴找到巢狀子步驟並從選取位置接續後方流程", () => {
@@ -1278,6 +1368,27 @@ test("AI Workflow 正規化會移除 script 與敏感預設值", () => {
   assert.equal(result.draft.parameters[0]?.type, "secret");
   assert.equal(result.draft.parameters[0]?.defaultValue, undefined);
   assert.deepEqual(result.draft.allowedDomains, ["example.com"]);
+});
+
+test("AI Workflow 正規化會保留頁面 PDF 頁首／頁尾與縮放設定", () => {
+  const result = normalizeAIWorkflowDraft({
+    name: "PDF 流程",
+    targetUrl: "https://example.com",
+    steps: [{
+      name: "保存頁面 PDF",
+      kind: "savePagePdf",
+      pdfDisplayHeaderFooter: true,
+      pdfHeaderTemplate: '<div><span class="title"></span></div>',
+      pdfFooterTemplate: '<div><span class="pageNumber"></span>/<span class="totalPages"></span></div>',
+      pdfScale: 1.35
+    }]
+  }, { instruction: "保存目前頁面為 PDF" });
+  const step = result.draft.steps[0];
+  assert.equal(result.validation.valid, true);
+  assert.equal(step.pdfDisplayHeaderFooter, true);
+  assert.equal(step.pdfHeaderTemplate, '<div><span class="title"></span></div>');
+  assert.equal(step.pdfFooterTemplate, '<div><span class="pageNumber"></span>/<span class="totalPages"></span></div>');
+  assert.equal(step.pdfScale, 1.35);
 });
 
 test("V1.0.7 UI 提供 Gemini Header、TLS 診斷與 AI 流程助理", async () => {
@@ -1893,7 +2004,7 @@ test("V1.1.1 frame-aware recorder 會在子 Frame 重新載入後自動補裝並
     parentFrame: () => null,
     isDetached: () => false,
     evaluate: async (fn: Function, arg?: unknown) => {
-      if (arg === "1.1.6-recorder-framepath-normalization") return mainFrame.marker;
+      if (arg === "1.2.2-recorder-keyboard-upload-assertion") return mainFrame.marker;
       mainFrame.marker = true;
       mainFrame.installs += 1;
       return undefined;
@@ -1907,7 +2018,7 @@ test("V1.1.1 frame-aware recorder 會在子 Frame 重新載入後自動補裝並
     parentFrame: () => mainFrame,
     isDetached: () => false,
     evaluate: async (fn: Function, arg?: unknown) => {
-      if (arg === "1.1.6-recorder-framepath-normalization") return childFrame.marker;
+      if (arg === "1.2.2-recorder-keyboard-upload-assertion") return childFrame.marker;
       childFrame.marker = true;
       childFrame.installs += 1;
       return undefined;

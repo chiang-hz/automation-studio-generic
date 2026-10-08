@@ -5,7 +5,11 @@ import type {
   ReportParameters
 } from "../domain/types.ts";
 
+import type { BrowserMode } from "../domain/browserMode.ts";
+
 export interface DownloadReportInput {
+  browserMode?: BrowserMode;
+  signal?: AbortSignal;
   reportId: ReportId;
   reportName?: string;
   parameters: ReportParameters;

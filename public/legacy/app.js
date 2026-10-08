@@ -17,6 +17,7 @@ const state = {
   currentResult: null,
   authStatus: null,
   workerStatuses: [],
+  cancelRequestedId: null,
   pollTimer: null
 };
 
@@ -27,6 +28,8 @@ const elements = {
   reportSelect: document.querySelector("#reportSelect"),
   parameterFields: document.querySelector("#parameterFields"),
   debugToggle: document.querySelector("#debugToggle"),
+  browserModeSelect: document.querySelector("#browserModeSelect"),
+  browserModeWarning: document.querySelector("#browserModeWarning"),
   createTaskButton: document.querySelector("#createTaskButton"),
   addBatchItemButton: document.querySelector("#addBatchItemButton"),
   clearBatchButton: document.querySelector("#clearBatchButton"),
@@ -395,6 +398,12 @@ function bindActions() {
   elements.importPresetsButton.addEventListener("click", () => elements.importPresetsFile.click());
   elements.importPresetsFile.addEventListener("change", () => importBatchPresets());
   elements.applyBatchYearButton.addEventListener("click", () => applyBatchYear());
+  elements.taskSummary.addEventListener("click", event => {
+    if (event.target.closest("[data-cancel-task]")) void cancelCurrentTask();
+  });
+  elements.browserModeSelect.addEventListener("change", updateBrowserModeWarning);
+  elements.debugToggle.addEventListener("change", updateBrowserModeWarning);
+  updateBrowserModeWarning();
   elements.applyBatchStageButton.addEventListener("click", () => applyBatchParameter("stage", elements.batchStageSelect.value, "階段"));
   elements.applyBatchOutputFormatButton.addEventListener("click", () => applyBatchParameter("outputFormat", elements.batchOutputFormatSelect.value, "輸出格式"));
   elements.manageAuthButton.addEventListener("click", () => elements.authModal.showModal());
@@ -836,6 +845,7 @@ async function createDownloadTask() {
     const response = await callMcpTool("create_download_task", {
       reportId: state.selectedReportId,
       debug: elements.debugToggle.checked,
+      browserMode: elements.browserModeSelect.value,
       parameters
     });
 
@@ -933,6 +943,7 @@ async function createBatchDownloadTask() {
     elements.createBatchTaskButton.disabled = true;
     const response = await callMcpTool("create_batch_download_task", {
       debug: elements.debugToggle.checked,
+      browserMode: elements.browserModeSelect.value,
       continueOnError: elements.continueOnErrorToggle.checked,
       parallelism,
       retryEnabled: elements.retryEnabledToggle.checked,
@@ -1064,13 +1075,36 @@ function stopPolling() {
   }
 }
 
+async function cancelCurrentTask() {
+  const taskId = state.currentTask?.id;
+  const type = state.currentTaskType;
+  if (!taskId || !["queued", "running"].includes(state.currentTask.status) || state.cancelRequestedId === taskId) return;
+  state.cancelRequestedId = taskId;
+  renderTask();
+  try {
+    const response = await callMcpTool(type === "batch" ? "cancel_batch_download_task" : "cancel_download_task", { taskId });
+    if (state.currentTask?.id !== taskId || state.currentTaskType !== type) return;
+    state.currentTask = parseToolResponse(response);
+    renderTask();
+    await pollTask();
+  } catch (error) {
+    if (state.currentTask?.id === taskId) { state.cancelRequestedId = null; renderTask(); }
+    showToast(error.message);
+  }
+}
+
 async function pollTask() {
   if (!state.currentTask?.id) return;
 
-  const response = await callMcpTool(state.currentTaskType === "batch" ? "get_batch_download_task" : "get_download_task", {
-    taskId: state.currentTask.id
-  });
-  state.currentTask = parseToolResponse(response);
+  const taskId = state.currentTask.id;
+  const type = state.currentTaskType;
+  const response = await callMcpTool(type === "batch" ? "get_batch_download_task" : "get_download_task", { taskId });
+  if (state.currentTask?.id !== taskId || state.currentTaskType !== type) return;
+  const next = parseToolResponse(response);
+  if (["completed", "failed", "partial_failed", "cancelled"].includes(state.currentTask.status) && ["queued", "running", "cancelling"].includes(next.status)) return;
+  if (next.updatedAt && state.currentTask.updatedAt && next.updatedAt < state.currentTask.updatedAt) return;
+  state.currentTask = next;
+  if (!["queued", "running", "cancelling"].includes(next.status)) state.cancelRequestedId = null;
   renderTask();
 
   if (["completed", "partial_failed"].includes(state.currentTask.status)) {
@@ -1078,6 +1112,10 @@ async function pollTask() {
     await loadResult();
   }
 
+  if (state.currentTask.status === "cancelled") {
+    stopPolling();
+    showToast("任務已中斷，已完成的下載檔案仍保留。");
+  }
   if (state.currentTask.status === "failed") {
     stopPolling();
     showToast(state.currentTask.errorMessage || "下載任務失敗");
@@ -1104,12 +1142,13 @@ function computeBatchDashboard(task) {
   const completed = Number(task.completedCount ?? counts.completed ?? 0);
   const failed = Number(task.failedCount ?? counts.failed ?? 0);
   const skipped = Number(task.skippedCount ?? counts.skipped ?? 0);
+  const cancelled = Number(task.cancelledCount ?? counts.cancelled ?? 0);
   const retrying = Number(counts.retrying ?? 0);
-  const running = Number((counts.running ?? 0) + (counts.downloading ?? 0));
-  const queued = Math.max(0, total - completed - failed - skipped - retrying - running);
-  const done = completed + failed + skipped;
+  const running = Number((counts.running ?? 0) + (counts.downloading ?? 0) + (counts.cancelling ?? 0));
+  const queued = Math.max(0, total - completed - failed - skipped - cancelled - retrying - running);
+  const done = completed + failed + skipped + cancelled;
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-  return { total, completed, failed, skipped, retrying, running, queued, percent };
+  return { total, completed, failed, skipped, cancelled, retrying, running, queued, percent };
 }
 
 function renderDashboardMetric(label, value, className = "") {
@@ -1121,9 +1160,19 @@ function renderDashboardMetric(label, value, className = "") {
   `;
 }
 
+function updateBrowserModeWarning() {
+  elements.browserModeWarning.hidden = !(elements.debugToggle.checked && elements.browserModeSelect.value === "headless");
+}
+
+function formatBrowserMode(mode) {
+  return mode === "headless" ? "無頭模式" : mode === "headed" ? "顯示瀏覽器視窗" : "未記錄（舊任務）";
+}
+
 function formatTaskStatus(status) {
   const labels = {
     queued: "排隊中",
+    cancelling: "正在中斷",
+    cancelled: "已中斷",
     running: "執行中",
     retrying: "重試中",
     completed: "已完成",
@@ -1144,6 +1193,7 @@ function renderBatchDashboard(task) {
       ${renderDashboardMetric("重試中", dashboard.retrying, "retrying")}
       ${renderDashboardMetric("失敗", dashboard.failed, "failed")}
       ${renderDashboardMetric("略過", dashboard.skipped, "skipped")}
+      ${renderDashboardMetric("中斷", dashboard.cancelled, "cancelled")}
     </div>
     <div class="progress-block">
       <div class="progress-heading">
@@ -1158,8 +1208,8 @@ function renderBatchDashboard(task) {
 }
 
 function renderSingleTaskDashboard(task) {
-  const isDone = ["completed", "failed"].includes(task.status);
-  const percent = task.status === "completed" ? 100 : task.status === "failed" ? 100 : 0;
+  const isDone = ["completed", "failed", "cancelled"].includes(task.status);
+  const percent = isDone ? 100 : 0;
   return `
     <div class="task-dashboard single-dashboard">
       ${renderDashboardMetric("狀態", formatTaskStatus(task.status))}
@@ -1179,7 +1229,7 @@ function renderSingleTaskDashboard(task) {
 }
 
 function formatBatchStatusDetail(item) {
-  const detail = item.filePath ?? item.errorMessage ?? item.lastErrorMessage ?? "-";
+  const detail = item.filePath ?? (item.status === "cancelled" ? "已中斷，未完成下載" : item.errorMessage ?? item.lastErrorMessage ?? "-");
   const parts = [];
   if (item.attempt) {
     parts.push(`第 ${item.attempt} 次執行`);
@@ -1195,6 +1245,12 @@ function formatBatchStatusDetail(item) {
   return parts.length ? `${parts.join("；")}｜${detail}` : detail;
 }
 
+function renderCancelTaskButton(task) {
+  if (!["queued", "running", "cancelling"].includes(task.status)) return "";
+  const pending = task.status === "cancelling" || state.cancelRequestedId === task.id;
+  return `<button type="button" class="ghost-button compact-button danger-button" data-cancel-task ${pending ? "disabled" : ""}>${pending ? "正在中斷…" : "中斷任務"}</button>`;
+}
+
 function renderTask() {
   const task = state.currentTask;
   if (!task) {
@@ -1207,9 +1263,11 @@ function renderTask() {
       <div class="task-summary-header">
         <span class="status-pill ${escapeHtml(task.status)}">${escapeHtml(formatTaskStatus(task.status))}</span>
         <span class="task-id">Batch Task ID：${escapeHtml(task.id)}</span>
+        ${renderCancelTaskButton(task)}
       </div>
       ${renderBatchDashboard(task)}
       <div class="task-options-summary">
+        <div class="summary-row"><strong>瀏覽器模式</strong><span>${escapeHtml(formatBrowserMode(task.browserMode))}</span></div>
         <div class="summary-row"><strong>平行執行數</strong><span>${escapeHtml(String(task.parallelism ?? 1))}</span></div>
         <div class="summary-row"><strong>失敗自動重試</strong><span>${task.retryEnabled === false ? "off" : "on"}</span></div>
         <div class="summary-row"><strong>重試設定</strong><span>${escapeHtml(String(task.maxRetries ?? 3))} 次 / ${escapeHtml(String(task.retryDelaySeconds ?? 5))} 秒</span></div>
@@ -1235,9 +1293,11 @@ function renderTask() {
     <div class="task-summary-header">
       <span class="status-pill ${escapeHtml(task.status)}">${escapeHtml(formatTaskStatus(task.status))}</span>
       <span class="task-id">Task ID：${escapeHtml(task.id)}</span>
+      ${renderCancelTaskButton(task)}
     </div>
     ${renderSingleTaskDashboard(task)}
     <div class="task-options-summary">
+      <div class="summary-row"><strong>瀏覽器模式</strong><span>${escapeHtml(formatBrowserMode(task.browserMode))}</span></div>
       <div class="summary-row"><strong>Report</strong><span>${escapeHtml(task.reportId)}</span></div>
       <div class="summary-row"><strong>File</strong><span>${escapeHtml(task.filePath ?? "-")}</span></div>
       ${task.debugDir ? `<div class="summary-row"><strong>Debug Dir</strong><span>${escapeHtml(task.debugDir)}</span></div>` : ""}

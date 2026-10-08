@@ -1,12 +1,14 @@
+import type { BrowserMode } from "./browserMode.ts";
+
 export type ReportId = string;
 
 export type ParameterType = "string" | "date" | "enum";
 
-export type DownloadTaskStatus = "queued" | "running" | "completed" | "failed";
+export type DownloadTaskStatus = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
 
-export type BatchDownloadTaskStatus = "queued" | "running" | "completed" | "partial_failed" | "failed";
+export type BatchDownloadTaskStatus = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "partial_failed" | "failed";
 
-export type BatchDownloadItemStatus = "queued" | "running" | "retrying" | "completed" | "failed" | "skipped";
+export type BatchDownloadItemStatus = "queued" | "running" | "retrying" | "cancelling" | "cancelled" | "completed" | "failed" | "skipped";
 
 export interface ReportDefinition {
   id: ReportId;
@@ -32,6 +34,7 @@ export interface DownloadTask {
   reportId: ReportId;
   parameters: ReportParameters;
   debugEnabled?: boolean;
+  browserMode?: BrowserMode;
   status: DownloadTaskStatus;
   createdAt: string;
   updatedAt: string;
@@ -53,6 +56,7 @@ export interface BatchDownloadItemInput {
 }
 
 export interface BatchDownloadItem extends BatchDownloadItemInput {
+  browserMode?: BrowserMode;
   id: string;
   workerId?: string;
   status: BatchDownloadItemStatus;
@@ -72,6 +76,7 @@ export interface BatchDownloadTask {
   id: string;
   items: BatchDownloadItem[];
   debugEnabled?: boolean;
+  browserMode?: BrowserMode;
   continueOnError: boolean;
   parallelism?: number;
   retryEnabled?: boolean;
@@ -83,6 +88,7 @@ export interface BatchDownloadTask {
   completedCount: number;
   failedCount: number;
   skippedCount: number;
+  cancelledCount?: number;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -93,6 +99,7 @@ export interface BatchDownloadResult {
   completedCount: number;
   failedCount: number;
   skippedCount: number;
+  cancelledCount?: number;
   files: Array<{
     itemId: string;
     reportId: ReportId;

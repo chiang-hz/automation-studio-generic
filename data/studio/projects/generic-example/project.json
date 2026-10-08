@@ -19,6 +19,7 @@
     "downloadTimeoutMs": 60000,
     "viewportWidth": 1440,
     "viewportHeight": 900,
+    "stealth": false,
     "reuseProfile": true,
     "downloadPdfInsteadOfPreview": false,
     "cdpEndpoint": "http://127.0.0.1:9222",
@@ -89,6 +90,6 @@
     "範例",
     "通用"
   ],
-  "createdAt": "2026-10-03T03:02:11.197Z",
-  "updatedAt": "2026-10-03T03:02:11.200Z"
+  "createdAt": "2026-10-08T14:27:54.890Z",
+  "updatedAt": "2026-10-08T14:27:54.893Z"
 }

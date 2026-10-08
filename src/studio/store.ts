@@ -11,6 +11,7 @@ import {
   safeRunRecordPath
 } from "./runHistoryRetention.ts";
 import { DEFAULT_AI_SETTINGS } from "./ai/config.ts";
+import { normalizeBatchConcurrency } from "./concurrency.ts";
 import type { AIProviderConfig, AISettings } from "./ai/types.ts";
 
 const rootDir = path.resolve(process.env.STUDIO_DATA_DIR ?? "./data/studio");
@@ -394,7 +395,8 @@ function normalizeSystemSettings(value: Record<string, unknown>, previous?: Reco
     theme: ["system", "light", "dark"].includes(String(value.theme ?? previous?.theme ?? "system")) ? String(value.theme ?? previous?.theme ?? "system") : "system",
     retentionDays: clampSystemInteger(value.retentionDays ?? previous?.retentionDays, 1, 365, 30),
     defaultDownloadDir: String(value.defaultDownloadDir ?? previous?.defaultDownloadDir ?? "./downloads").trim() || "./downloads",
-    autoOpenBrowser: (value.autoOpenBrowser ?? previous?.autoOpenBrowser) !== false,
+    // Retain the old response field for compatibility; it is no longer configurable.
+    autoOpenBrowser: true,
     debugRetention: String(value.debugRetention ?? previous?.debugRetention ?? "failures") === "all" ? "all" : "failures",
     runHistoryRetentionDays: clampSystemInteger(value.runHistoryRetentionDays ?? previous?.runHistoryRetentionDays, 1, 365, 30),
     issueReportEmail: String(value.issueReportEmail ?? previous?.issueReportEmail ?? process.env.AUTOMATION_STUDIO_SUPPORT_EMAIL ?? "").trim(),
@@ -476,6 +478,7 @@ export function createDefaultProject(input: Partial<WorkflowProject> = {}): Work
       connectionMode: "managed",
       channel: "bundled",
       headless: false,
+      stealth: false,
       slowMoMs: 100,
       defaultTimeoutMs: 30_000,
       downloadTimeoutMs: 60_000,
@@ -570,6 +573,7 @@ function normalizeBrowserSettings(browser: WorkflowProject["browser"] | undefine
     downloadTimeoutMs: Number.isFinite(Number(raw.downloadTimeoutMs)) ? Math.max(1000, Number(raw.downloadTimeoutMs)) : 60_000,
     viewportWidth: Number.isFinite(Number(raw.viewportWidth)) ? Math.max(320, Number(raw.viewportWidth)) : 1440,
     viewportHeight: Number.isFinite(Number(raw.viewportHeight)) ? Math.max(240, Number(raw.viewportHeight)) : 900,
+    stealth: raw.stealth === true,
     reuseProfile: raw.reuseProfile !== false,
     downloadPdfInsteadOfPreview: raw.downloadPdfInsteadOfPreview === true,
     cdpEndpoint: String(raw.cdpEndpoint || "http://127.0.0.1:9222").trim(),
@@ -694,8 +698,8 @@ function normalizeSettings(settings: Partial<WorkflowSettings> | undefined): Wor
     saveHtmlOnFailure: true,
     captureConsole: true,
     captureNetwork: true,
-    defaultConcurrency: 1,
-    ...settings
+    ...settings,
+    defaultConcurrency: normalizeBatchConcurrency(settings?.defaultConcurrency)
   };
 }
 

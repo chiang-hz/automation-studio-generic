@@ -62,7 +62,7 @@ export async function createStudioRouter(): Promise<StudioRouter> {
         sendJson(response, 200, {
           ok: true,
           server: "automation-studio",
-          version: "1.2.1",
+          version: "2.0.2",
           baseVersion: "0.2.7",
           runtime: await runtimeStatus(),
           platform: process.platform
@@ -199,7 +199,7 @@ export async function createStudioRouter(): Promise<StudioRouter> {
             }
           }
           const runs = await runner.startBatch(project, parameterRows);
-          sendJson(response, 202, { runs });
+          sendJson(response, 202, { runs, concurrency: runs[0]?.batchConcurrency ?? 1 });
           return true;
         }
         if (request.method === "POST" && parts[2] === "export") {
@@ -216,6 +216,14 @@ export async function createStudioRouter(): Promise<StudioRouter> {
           }
           if (request.method === "POST" && parts[3] === "stop") {
             await recorder.stop(projectId);
+            sendJson(response, 200, { ok: true });
+            return true;
+          }
+          if (request.method === "POST" && parts[3] === "assertion") {
+            const body = await readJsonBody(request);
+            const mode = body.mode;
+            if (mode != null && !["visible", "text", "value"].includes(String(mode))) throw new Error("不支援的驗證種類。");
+            await recorder.setAssertionMode(projectId, mode as "visible" | "text" | "value" | undefined);
             sendJson(response, 200, { ok: true });
             return true;
           }
@@ -254,6 +262,7 @@ export async function createStudioRouter(): Promise<StudioRouter> {
             return true;
           }
           if (request.method === "POST" && parts[3] === "commit") {
+            await recorder.flush(projectId);
             const project = await store.getProject(projectId);
             project.steps = applyRecordedEvents(project.steps, recorder.status(projectId).events);
             recorder.clear(projectId);

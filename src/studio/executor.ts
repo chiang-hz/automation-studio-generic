@@ -1,3 +1,4 @@
+import { prepareStudioChromium } from "./stealth.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -5,8 +6,11 @@ import { spawn } from "node:child_process";
 import { createId, StudioStore } from "./store.ts";
 import { browserLaunchMessage, DESKTOP_VIEWPORT, resolveStudioBrowser } from "./browser.ts";
 import { connectToCdpBrowser } from "./cdp.ts";
-import { ensurePdfDownloadPreference, resolveProjectProfileDir } from "./profile.ts";
+import { ensurePdfDownloadPreference, resolveProjectProfileDir, resolveBatchWorkerProfileDir } from "./profile.ts";
+import { effectiveBatchConcurrency, MAX_BATCH_CONCURRENCY } from "./concurrency.ts";
 import { captureFailureDiagnostics } from "./debugDiagnostics.ts";
+import { buildPagePdfFilename } from "../domain/localTimestamp.ts";
+import { buildNativePagePdfOptions } from "../domain/pagePdf.ts";
 import type {
   ConditionRule,
   LocatorMatchMode,
@@ -76,7 +80,12 @@ export class WorkflowRunner {
     steps: WorkflowStep[];
     batchSessionId?: string;
     batchSessionLast?: boolean;
+    batchWorker?: number;
+    concurrency: number;
   }> = [];
+  private readonly activeResources = new Set<string>();
+  private readonly resourceOwners = new Map<string, string>();
+  private exclusiveRunActive = false;
   private readonly batchSessions = new Map<string, {
     browser?: any;
     context: any;
@@ -96,7 +105,7 @@ export class WorkflowRunner {
   async start(
     project: WorkflowProject,
     parameters: Record<string, string | boolean>,
-    options: { mode?: WorkflowRun["mode"]; stepId?: string; batchSessionId?: string; batchSessionLast?: boolean } = {}
+    options: { mode?: WorkflowRun["mode"]; stepId?: string; batchSessionId?: string; batchSessionLast?: boolean; batchWorker?: number; batchConcurrency?: number } = {}
   ): Promise<WorkflowRun> {
     const runId = createId("run");
     const debugDir = path.resolve("./debug", project.id, runId);
@@ -111,6 +120,8 @@ export class WorkflowRunner {
       projectName: project.name,
       status: "queued",
       mode: runMode,
+      ...(options.batchWorker ? { batchWorker: options.batchWorker } : {}),
+      ...(runMode === "batch" ? { batchConcurrency: options.batchConcurrency ?? 1 } : {}),
       parameters: materializeParameters(project, parameters),
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -129,19 +140,22 @@ export class WorkflowRunner {
       completedBatchManualSteps: new Set<string>(),
       reusableBatchManualSteps: new Set<string>()
     });
-    this.queue.push({ project, run, steps: selectedSteps, batchSessionId: options.batchSessionId, batchSessionLast: options.batchSessionLast });
+    this.queue.push({ project, run, steps: selectedSteps, batchSessionId: options.batchSessionId, batchSessionLast: options.batchSessionLast, batchWorker: options.batchWorker, concurrency: options.batchWorker ? effectiveBatchConcurrency(project) : 1 });
     setImmediate(() => this.pumpQueue());
     return run;
   }
 
   async startBatch(project: WorkflowProject, parameterRows: Array<Record<string, string | boolean>>): Promise<WorkflowRun[]> {
-    const batchSessionId = createId("batch-session");
+    const concurrency = Math.min(effectiveBatchConcurrency(project), Math.max(1, parameterRows.length));
+    const batchSessionIds = Array.from({ length: concurrency }, () => createId("batch-session"));
     const runs: WorkflowRun[] = [];
     for (let index = 0; index < parameterRows.length; index += 1) {
       runs.push(await this.start(project, parameterRows[index], {
         mode: "batch",
-        batchSessionId,
-        batchSessionLast: index === parameterRows.length - 1
+        batchSessionId: batchSessionIds[index % concurrency],
+        batchSessionLast: index + concurrency >= parameterRows.length,
+        batchConcurrency: concurrency,
+        ...(concurrency > 1 ? { batchWorker: index % concurrency + 1 } : {})
       }));
     }
     return runs;
@@ -170,24 +184,46 @@ export class WorkflowRunner {
   }
 
   private pumpQueue(): void {
-    if (this.activeCount >= 1) return;
-    const job = this.queue.shift();
-    if (!job) return;
-    this.activeCount += 1;
-    void this.execute(job.project, job.run, job.steps, {
-      batchSessionId: job.batchSessionId,
-      batchSessionLast: job.batchSessionLast === true
-    }).finally(() => {
-      this.activeCount -= 1;
-      this.pumpQueue();
-    });
+    while (this.activeCount < MAX_BATCH_CONCURRENCY && !this.exclusiveRunActive) {
+      const index = this.queue.findIndex((job) => {
+        if (job.concurrency === 1 && this.activeCount > 0) return false;
+        const resource = this.jobResource(job.project, job.batchWorker);
+        const owner = this.resourceOwners.get(resource);
+        return !this.activeResources.has(resource) && (!owner || owner === (job.batchSessionId ?? job.run.id));
+      });
+      if (index < 0) return;
+      const [job] = this.queue.splice(index, 1);
+      const resource = this.jobResource(job.project, job.batchWorker);
+      this.activeResources.add(resource);
+      this.resourceOwners.set(resource, job.batchSessionId ?? job.run.id);
+      this.activeCount += 1;
+      if (job.concurrency === 1) this.exclusiveRunActive = true;
+      void this.execute(job.project, job.run, job.steps, {
+        batchSessionId: job.batchSessionId,
+        batchSessionLast: job.batchSessionLast === true,
+        batchWorker: job.batchWorker
+      }).catch((error) => {
+        console.error(`[workflow-run] ${job.run.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }).finally(() => {
+        this.activeCount -= 1;
+        if (job.concurrency === 1) this.exclusiveRunActive = false;
+        this.activeResources.delete(resource);
+        if (!job.batchSessionId || !this.batchSessions.has(job.batchSessionId)) this.resourceOwners.delete(resource);
+        this.pumpQueue();
+      });
+    }
+  }
+
+  private jobResource(project: WorkflowProject, batchWorker?: number): string {
+    if (project.browser.connectionMode === "cdp") return `cdp:${String(project.browser.cdpEndpoint).replace(/\/$/, "")}`;
+    return batchWorker ? resolveBatchWorkerProfileDir(project.id, batchWorker) : resolveProjectProfileDir(project.id);
   }
 
   private async execute(
     project: WorkflowProject,
     run: WorkflowRun,
     steps: WorkflowStep[],
-    options: { batchSessionId?: string; batchSessionLast?: boolean } = {}
+    options: { batchSessionId?: string; batchSessionLast?: boolean; batchWorker?: number } = {}
   ): Promise<void> {
     let browser: any;
     let context: any;
@@ -199,6 +235,10 @@ export class WorkflowRunner {
     const variables: Record<string, string | boolean> = {};
     try {
       if (this.activeRuns.get(run.id)?.cancelled) {
+        // A cancelled queued row may be the final owner of a preserved session.
+        // Close it before releasing its profile lease.
+        const cached = options.batchSessionId ? this.batchSessions.get(options.batchSessionId) : undefined;
+        if (cached) ({ browser, context, page, externalBrowser } = cached);
         run.status = "cancelled";
         run.endedAt = new Date().toISOString();
         return;
@@ -209,7 +249,7 @@ export class WorkflowRunner {
       }
       run.status = "running";
       await this.store.saveRun(run);
-      await appendEvent(run.debugDir, "run_started", { projectId: project.id, parameters: redactParameters(project, run.parameters) });
+      await appendEvent(run.debugDir, "run_started", { projectId: project.id, parameters: redactParameters(project, run.parameters), batchWorker: options.batchWorker, batchConcurrency: run.batchConcurrency });
 
       const cachedBatchSession = options.batchSessionId ? this.batchSessions.get(options.batchSessionId) : undefined;
       if (cachedBatchSession && cachedBatchSession.context && !(cachedBatchSession.context.isClosed?.() ?? false)) {
@@ -227,9 +267,14 @@ export class WorkflowRunner {
           reason: "reuse-batch-session"
         });
       } else {
-        borrowedSession = this.acquireActiveSession?.(project.id);
+        // Parallel workers own independent profiles and never borrow the recorder.
+        borrowedSession = options.batchWorker ? undefined : this.acquireActiveSession?.(project.id);
       }
       if (!reusedBatchSession && borrowedSession) {
+        const expectedStealth = project.browser.stealth === true && project.browser.connectionMode !== "cdp";
+        if ((borrowedSession.stealth === true) !== expectedStealth) {
+          throw new Error("Stealth 設定已變更，請先停止錄製並重新啟動錄製瀏覽器，再執行流程。");
+        }
         context = borrowedSession.context;
         page = borrowedSession.page;
         await page.bringToFront().catch(() => undefined);
@@ -240,6 +285,7 @@ export class WorkflowRunner {
         });
       } else if (!reusedBatchSession) {
         const playwright = await loadPlaywright();
+        const chromium = await prepareStudioChromium(playwright, project.browser);
         if (project.browser.connectionMode === "cdp") {
           const attached = await connectToCdpBrowser(playwright, project.browser);
           browser = attached.browser;
@@ -266,14 +312,14 @@ export class WorkflowRunner {
             ...(browserResolution.executablePath ? { executablePath: browserResolution.executablePath } : {})
           };
           if (project.browser.reuseProfile) {
-            const profileDir = resolveProjectProfileDir(project.id);
+            const profileDir = options.batchWorker ? resolveBatchWorkerProfileDir(project.id, options.batchWorker) : resolveProjectProfileDir(project.id);
             await fs.mkdir(profileDir, { recursive: true });
             if (project.browser.downloadPdfInsteadOfPreview === true) {
               await ensurePdfDownloadPreference(profileDir);
               await appendEvent(run.debugDir, "browser_pdf_download_preference", { enabled: true, profileDir });
             }
             try {
-              context = await playwright.chromium.launchPersistentContext(profileDir, {
+              context = await chromium.launchPersistentContext(profileDir, {
                 ...launchOptions,
                 acceptDownloads: true,
                 viewport: DESKTOP_VIEWPORT
@@ -283,7 +329,7 @@ export class WorkflowRunner {
             }
           } else {
             try {
-              browser = await playwright.chromium.launch(launchOptions);
+              browser = await chromium.launch(launchOptions);
             } catch (error) {
               throw new Error(browserLaunchMessage(project.browser.channel, browserResolution, error), { cause: error });
             }
@@ -292,6 +338,11 @@ export class WorkflowRunner {
           page = context.pages()[0] ?? await context.newPage();
         }
       }
+      await appendEvent(run.debugDir, "browser_stealth", {
+        requested: project.browser.stealth === true,
+        enabled: project.browser.stealth === true && project.browser.connectionMode !== "cdp",
+        reason: project.browser.connectionMode === "cdp" ? "CDP 不套用 Stealth" : "managed"
+      });
       initializeTabState(context, page);
       page.setDefaultTimeout(project.browser.defaultTimeoutMs);
       detachObservability = attachObservability(context, page, run, project.settings.captureConsole, project.settings.captureNetwork);
@@ -595,6 +646,44 @@ export class WorkflowRunner {
       await page.screenshot({ path: filePath, fullPage: true });
       return { message: `截圖已保存：${filePath}` };
     }
+    if (step.kind === "savePagePdf") {
+      if (typeof page.pdf !== "function") throw new Error("保存頁面 PDF 需要 Chromium／Chrome 瀏覽器分頁；目前連線不支援原生列印 PDF。");
+      const studioSettings = await this.store.getSettings();
+      const configuredDownloadDir = String(studioSettings.defaultDownloadDir ?? "./downloads").trim() || "./downloads";
+      const targetDir = path.resolve(configuredDownloadDir);
+      await fs.mkdir(targetDir, { recursive: true });
+      const configuredName = expand(step.pdfFileName ?? "");
+      const fileName = safeFile(buildPagePdfFilename(configuredName, step.name || step.id, step.pdfUseLocalTime !== false));
+      let viewportPrintStyle: any;
+      const pdfOptions = buildNativePagePdfOptions({
+        ...step,
+        pdfHeaderTemplate: expand(step.pdfHeaderTemplate ?? ""),
+        pdfFooterTemplate: expand(step.pdfFooterTemplate ?? "")
+      });
+      const filePath = await uniquePath(targetDir, fileName);
+      try {
+        if (step.pdfFullPage === false) {
+          const viewportHeight = await page.evaluate(() => Math.max(1, window.innerHeight));
+          viewportPrintStyle = await page.addStyleTag({ content: `@media print { html, body { height: ${viewportHeight}px !important; max-height: ${viewportHeight}px !important; overflow: hidden !important; } }` });
+        }
+        await page.pdf({ path: filePath, ...pdfOptions });
+        const stat = await fs.stat(filePath);
+        if (!stat.size) throw new Error("保存的 PDF 檔案大小為 0 bytes。");
+      } catch (error) {
+        await fs.rm(filePath, { force: true }).catch(() => undefined);
+        throw error;
+      } finally {
+        if (viewportPrintStyle) await viewportPrintStyle.evaluate((element: Element) => element.remove()).catch(() => undefined);
+      }
+      const orientation = pdfOptions.landscape ? "橫向" : "直向";
+      const headerFooter = pdfOptions.displayHeaderFooter
+        ? (pdfOptions.headerTemplate || pdfOptions.footerTemplate ? "已啟用" : "已啟用，但範本空白")
+        : "未啟用";
+      return {
+        message: `頁面 PDF 已保存：${filePath}（${pdfOptions.format}、${orientation}、縮放 ${Math.round(pdfOptions.scale * 100)}%、頁首／頁尾${headerFooter}）`,
+        downloadPath: filePath
+      };
+    }
     if (step.kind === "script") {
       const source = expand(step.script ?? String(step.value ?? ""));
       await page.evaluate((code: string) => (0, eval)(code), source);
@@ -703,14 +792,17 @@ export class WorkflowRunner {
         } else {
           await fs.writeFile(filePath, capture.body);
         }
+        const stat = await fs.stat(filePath);
+        if (!stat.size) throw new Error("下載檔案大小為 0 bytes。");
+      } catch (error) {
+        await fs.rm(filePath, { force: true }).catch(() => undefined);
+        throw error;
       } finally {
         if (capture.kind === "browser-file") {
           await fs.rm(capture.stagingDir, { recursive: true, force: true }).catch(() => undefined);
         }
         if (capture.popup && !capture.popup.isClosed?.()) await capture.popup.close().catch(() => undefined);
       }
-      const stat = await fs.stat(filePath);
-      if (!stat.size) throw new Error("下載檔案大小為 0 bytes。");
       return {
         message: (capture.kind === "direct-response"
           ? `直接下載完成：${suggested}`
@@ -744,12 +836,16 @@ export class WorkflowRunner {
       return { message: `已擷取 ${extracted.trim().length} 個字元至變數 {{${outputName}}}` };
     }
     const humanized = project.settings.humanizedPlayback === true;
-    await prepareInteraction(locator, page, timeout, project.settings.safePlayback !== false, humanized);
+    if (step.kind !== "upload") await prepareInteraction(locator, page, timeout, project.settings.safePlayback !== false, humanized);
     if (step.kind === "click") await locator.click({ timeout });
     else if (step.kind === "dblclick") await locator.dblclick({ timeout });
     else if (step.kind === "fill") await fillLocator(locator, expand(step.value), timeout, humanized);
     else if (step.kind === "select") await locator.selectOption(expand(step.value));
-    else if (step.kind === "upload") await locator.setInputFiles(path.resolve(expand(step.value)));
+    else if (step.kind === "upload") {
+      const files = expand(step.value).split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
+      if (!files.length) throw new Error("上傳步驟缺少檔案路徑，請設定完整本機路徑（一行一個）。");
+      await locator.setInputFiles(files.map((file) => path.resolve(file)));
+    }
     else if (step.kind === "press") await locator.press(expand(step.value));
     else if (step.kind === "hover") await locator.hover({ timeout });
     else if (step.kind === "check") await locator.check({ timeout });
@@ -794,13 +890,13 @@ async function loadPlaywright(): Promise<PlaywrightModule> {
   }
 }
 
-async function resolveLocatorAcrossFrames(page: any, selectors: SelectorRule[], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, matchMode: LocatorMatchMode = "unique", matchIndex?: number, preferredFrame?: WorkflowStep["frame"]): Promise<any> {
+async function resolveLocatorAcrossFrames(page: any, selectors: SelectorRule[], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, matchMode: LocatorMatchMode = "unique", matchIndex?: number, preferredFrame?: WorkflowStep["frame"], allowHidden = false): Promise<any> {
   const scopes = orderedFrameScopes(page, preferredFrame);
   const errors: string[] = [];
   for (let index = 0; index < scopes.length; index += 1) {
     const scope = scopes[index];
     try {
-      return await resolveLocator(scope, selectors, parameters, variables, matchMode, matchIndex);
+      return await resolveLocator(scope, selectors, parameters, variables, matchMode, matchIndex, allowHidden);
     } catch (error) {
       const url = scope === page ? page.url() : scope.url?.() ?? "frameLocator";
       errors.push(`${scope === page ? "main" : `frame${index}`}(${url}): ${error instanceof Error ? error.message : String(error)}`);
@@ -811,9 +907,9 @@ async function resolveLocatorAcrossFrames(page: any, selectors: SelectorRule[], 
 
 async function resolveLocatorForStep(page: any, step: WorkflowStep, selectors: SelectorRule[], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, matchMode: LocatorMatchMode = "unique", matchIndex?: number): Promise<any> {
   if (step.autoFrameSearch) {
-    return resolveLocatorAcrossFrames(page, selectors, parameters, variables, matchMode, matchIndex, step.frame);
+    return resolveLocatorAcrossFrames(page, selectors, parameters, variables, matchMode, matchIndex, step.frame, step.kind === "upload");
   }
-  return resolveLocator(resolveFrame(page, step.frame), selectors, parameters, variables, matchMode, matchIndex);
+  return resolveLocator(resolveFrame(page, step.frame), selectors, parameters, variables, matchMode, matchIndex, step.kind === "upload");
 }
 
 function orderedFrameScopes(page: any, preferredFrame?: WorkflowStep["frame"]): any[] {
@@ -827,7 +923,7 @@ function orderedFrameScopes(page: any, preferredFrame?: WorkflowStep["frame"]): 
   });
 }
 
-async function resolveLocator(scope: any, selectors: SelectorRule[], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, matchMode: LocatorMatchMode = "unique", matchIndex?: number): Promise<any> {
+async function resolveLocator(scope: any, selectors: SelectorRule[], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, matchMode: LocatorMatchMode = "unique", matchIndex?: number, allowHidden = false): Promise<any> {
   if (!selectors.length) throw new Error("此步驟尚未設定元件定位方式。");
   const errors: string[] = [];
   for (const rule of selectors) {
@@ -844,6 +940,16 @@ async function resolveLocator(scope: any, selectors: SelectorRule[], parameters:
       else if (rule.strategy === "name") locator = scope.locator(`[name=${cssString(value)}]`);
       else if (rule.strategy === "xpath") locator = scope.locator(`xpath=${value}`);
       else locator = scope.locator(value);
+      if (allowHidden) {
+        const count = await locator.count();
+        if (count === 1) return locator.nth(0);
+        if (count > 0 && matchMode === "first") return locator.nth(0);
+        if (count > 0 && matchMode === "last") return locator.nth(count - 1);
+        const requested = Math.trunc(Number(matchIndex ?? 1));
+        if (matchMode === "nth" && requested >= 1 && requested <= count) return locator.nth(requested - 1);
+        errors.push(`${rule.strategy}:${value} 上傳元件數量 ${count}，請使用唯一定位或指定第 N 筆`);
+        continue;
+      }
       const visible = locator.filter({ visible: true });
       const desktopIndexes = await visible.evaluateAll((elements: Element[]) => elements
         .map((element, index) => ({ element, index }))
@@ -1468,7 +1574,7 @@ async function downloadWithWindowsNative(url: string, filePath: string, headers:
       const stat = await fs.stat(filePath);
       if (stat.size) return true;
     } catch {
-      await fs.rm(filePath, { force: true }).catch(() => undefined);
+      await fs.writeFile(filePath, "").catch(() => undefined);
     }
   }
   return false;
@@ -1752,6 +1858,7 @@ async function waitForNewFirstItem(page: any, step: WorkflowStep, parameters: Re
 
 async function applyWait(page: any, rule: WorkflowStep["waitAfter"], parameters: Record<string, string | boolean>, variables: Record<string, string | boolean>, autoFrameSearch = false): Promise<void> {
   if (!rule) return;
+  autoFrameSearch = autoFrameSearch || rule.autoFrameSearch === true;
   const timeout = rule.timeoutMs ?? 30_000;
   const interpolated = interpolate(rule.value ?? "", parameters, variables);
   const value = ["visible", "hidden", "attached"].includes(rule.kind)
@@ -1818,10 +1925,20 @@ async function verifyStep(page: any, step: WorkflowStep, parameters: Record<stri
   else if (rule.kind === "exists") {
     if (!(await locator.count())) throw new Error("驗證失敗：元件不存在。");
   } else if (rule.kind === "value") {
-    const actual = await locator.inputValue();
+    const deadline = Date.now() + timeout;
+    let actual = await locator.inputValue();
+    while (actual !== String(expected ?? "") && Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(200, Math.max(1, deadline - Date.now())));
+      actual = await locator.inputValue();
+    }
     if (actual !== String(expected ?? "")) throw new Error(`欄位值驗證失敗。預期 ${expected}，實際 ${actual}`);
   } else if (rule.kind === "text") {
-    const actual = (await locator.textContent())?.trim() ?? "";
+    const deadline = Date.now() + timeout;
+    let actual = (await locator.textContent())?.trim() ?? "";
+    while (!actual.includes(String(expected ?? "")) && Date.now() < deadline) {
+      await page.waitForTimeout(Math.min(200, Math.max(1, deadline - Date.now())));
+      actual = (await locator.textContent())?.trim() ?? "";
+    }
     if (!actual.includes(String(expected ?? ""))) throw new Error(`文字驗證失敗。預期包含 ${expected}，實際 ${actual}`);
   } else if (rule.kind === "checked") {
     const actual = await locator.isChecked();
@@ -2216,15 +2333,17 @@ export function appendDownloadTimestamp(fileName: string, now = new Date()): str
   return safeFile(`${base}-${stamp}${extension}`);
 }
 
-async function uniquePath(directory: string, fileName: string): Promise<string> {
+export async function uniquePath(directory: string, fileName: string): Promise<string> {
   const extension = path.extname(fileName);
   const base = extension ? fileName.slice(0, -extension.length) : fileName;
   for (let index = 1; index < 10_000; index += 1) {
     const candidate = path.join(directory, index === 1 ? fileName : `${base} (${index})${extension}`);
     try {
-      await fs.access(candidate);
-    } catch {
+      const reservation = await fs.open(candidate, "wx");
+      await reservation.close();
       return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
   throw new Error(`無法建立不重複的下載檔名：${fileName}`);

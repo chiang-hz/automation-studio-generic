@@ -6,6 +6,9 @@
     <meta name="color-scheme" content="light dark" />
     <title>網站自動化流程設計平台 · Automation Studio</title>
     <link rel="stylesheet" href="./styles.css" />
+  <!-- MODERN START -->
+    <link rel="stylesheet" href="/modern/assets/studio.css?v=2.0.2" />
+    <!-- MODERN END -->
   </head>
   <body>
     <div class="app-shell">
@@ -20,9 +23,12 @@
 
         <div class="project-switcher">
           <label for="projectSelect">目前專案</label>
-          <select id="projectSelect" aria-label="目前專案"></select>
-          <button class="sidebar-action" id="newProjectButton" type="button">＋ 建立新專案</button>
-          <button class="sidebar-action" id="importProjectButton" type="button">⇧ 匯入可攜工作流程</button>
+          <div class="project-select-control">
+            <select id="projectSelect" aria-label="目前專案" title="選擇目前專案"></select>
+            <span id="modern-project-switcher-icon" class="sidebar-project-icon" aria-hidden="true"></span>
+          </div>
+          <button class="sidebar-action" id="newProjectButton" type="button" title="建立新專案" aria-label="建立新專案"><span class="sidebar-action-icon" aria-hidden="true"></span><span class="sidebar-action-label">建立新專案</span></button>
+          <button class="sidebar-action" id="importProjectButton" type="button" title="匯入可攜工作流程" aria-label="匯入可攜工作流程"><span class="sidebar-action-icon" aria-hidden="true"></span><span class="sidebar-action-label">匯入可攜工作流程</span></button>
           <input id="importProjectFile" type="file" accept=".zip,.json,application/zip,application/json" hidden />
         </div>
 
@@ -47,12 +53,12 @@
           <summary>開發者功能</summary>
           <button data-view="aiWorkflow" type="button"><span>AI</span>AI 流程助理</button>
           <a class="developer-link" href="/legacy/"><span>E</span>EBAS 既有功能</a>
-          <button data-view="developer" type="button"><span>{ }</span>原始工作流程 JSON</button>
+          <button data-view="developer" type="button"><span>{ }</span>工作流程原始碼</button>
         </details>
 
         <div class="runtime-status">
           <i id="serverDot"></i>
-          <div><strong id="serverStatus">連線檢查中</strong><span id="runtimeStatus">Automation Studio 1.2.1</span></div>
+          <div><strong id="serverStatus">連線檢查中</strong><span id="runtimeStatus">Automation Studio 2.0.2</span></div>
         </div>
       </aside>
 
@@ -109,6 +115,7 @@
                 <label class="field"><span>瀏覽器連線模式</span><select id="browserConnectionMode"><option value="managed">Automation Studio 管理瀏覽器</option><option value="cdp">接管現有 Chrome（CDP）</option></select><small>CDP 模式會連接你手動開啟的本機 Chrome；流程結束只解除連線，不關閉 Chrome。</small></label>
                 <label class="field" id="browserChannelField"><span>瀏覽器</span><select id="browserChannel"><option value="bundled">隨附 Chromium（錄製建議）</option><option value="chrome">系統 Google Chrome</option></select><small>管理模式由 Automation Studio 啟動瀏覽器；固定使用電腦版 1440 × 900。Microsoft Edge 選項已移除；公司原則／IE 模式常會阻止 Playwright 錄製，建議使用隨附 Chromium 或 Chrome。</small></label>
                 <label class="field"><span>網站元件 Adapter</span><select id="projectAdapter"><option value="generic">通用 HTML</option><option value="extjs">ExtJS</option><option value="ksi">Ksi</option><option value="ebas">EBAS 範例</option></select></label>
+                <label class="switch-field" id="stealthField"><input id="stealth" type="checkbox" /><span><b>啟用 Stealth（此專案）</b><small>減少部分瀏覽器自動化特徵；預設關閉。僅適用管理模式，CDP 接管不生效。變更後請儲存並重新啟動錄製瀏覽器。不能保證網站不阻擋。</small></span></label>
                 <label class="switch-field" id="reuseProfileField"><input id="reuseProfile" type="checkbox" /><span><b>保留登入狀態</b><small>管理模式使用專案固定 Profile；CDP 模式的登入狀態由你連接的 Chrome Profile 自行保存。</small></span></label>
                 <label class="switch-field" id="downloadPdfInsteadOfPreviewField"><input id="downloadPdfInsteadOfPreview" type="checkbox" /><span><b>PDF 直接下載，不開啟預覽</b><small>使用專案專用 Chrome Profile 關閉內建 PDF 預覽；PDF 連結會觸發原生下載。變更後請重新啟動錄製/執行瀏覽器。</small></span></label>
                 <label class="switch-field" id="headlessField"><input id="headless" type="checkbox" /><span><b>背景模式</b><small>CDP 模式不適用；錄製與人工登入時仍會顯示瀏覽器。</small></span></label>
@@ -132,6 +139,8 @@
 
             <section class="card sticky-card">
               <div class="section-heading"><div><h2>錄製事件</h2><p>人工操作會轉成可編輯步驟。</p></div><span id="recordingCount" class="counter">0</span></div>
+              <div class="action-row"><label class="field"><span>點選元素新增驗證</span><select id="recorderAssertionKind"><option value="visible">元素可見</option><option value="text">文字內容</option><option value="value">欄位值</option></select></label><button class="button secondary" id="pickRecorderAssertionButton" type="button">選取驗證元素</button><button class="button ghost" id="cancelRecorderAssertionButton" type="button">取消選取</button></div>
+              <p class="recording-diagnostic" id="recorderAssertionHint" role="status">支援 Enter／Tab／快捷鍵與上傳錄製；上傳步驟需補完整路徑後啟用。</p>
               <div class="recording-list empty-state compact" id="recordingList">尚未啟動錄製。</div><p class="recording-location" id="recordingLocation"></p><p class="recording-diagnostic" id="recordingDiagnostic">最近操作診斷：尚無資料</p>
               <div class="action-row stacked"><button class="button primary" id="commitRecordingButton" type="button">加入流程步驟</button><button class="button ghost" id="clearRecordingButton" type="button">清除本次事件</button></div>
             </section>
@@ -188,7 +197,7 @@
           </div>
           <div class="designer-grid">
             <aside class="designer-pane palette-pane">
-              <div class="pane-heading"><h2>動作元件</h2><p>點選以加入流程</p></div>
+              <div class="pane-heading"><div class="pane-heading-copy"><h2>動作元件</h2><p>點選以加入流程</p></div><div id="modern-palette-controls" class="palette-controls"></div></div>
               <div class="palette" id="stepPalette">
                 <button data-kind="navigate"><b>前往網址</b><span>在目前分頁開啟指定頁面</span></button>
                 <button data-kind="newTab"><b>開新分頁</b><span>建立並命名新的瀏覽器分頁</span></button>
@@ -211,13 +220,14 @@
                 <button data-kind="waitNewListItem"><b>等待清單新資料</b><span>找出基準集合以外的新項目</span></button>
                 <button data-kind="assert"><b>驗證</b><span>文字、值與可見性</span></button>
                 <button data-kind="download"><b>下載檔案</b><span>監控 popup 與下載</span></button>
+                <button data-kind="savePagePdf"><b>保存頁面 PDF</b><span>使用 Chromium 列印目前頁面並保存至預設下載資料夾</span></button>
                 <button data-kind="condition"><b>條件分支</b><span>依狀態判斷</span></button>
                 <button data-kind="loop"><b>迴圈</b><span>批次重複步驟</span></button>
               </div>
             </aside>
 
             <section class="designer-pane canvas-pane">
-              <div class="pane-heading row"><div><h2>流程步驟</h2><p>拖曳 ⋮⋮ 可排序；每個步驟可直接單步執行或從該步驟開始執行。</p></div><div class="step-toolbar-actions"><button class="text-button" id="enableAllStepsButton" type="button">全部啟用</button><button class="text-button" id="disableAllStepsButton" type="button">全部停用</button><button class="text-button" id="addNavigateButton" type="button">＋ 加入步驟</button></div></div>
+              <div class="pane-heading row"><div><h2>流程步驟</h2><p>單擊選取、雙擊編輯，按住後拖曳：上緣插入前方、中央交換、下緣插入後方；每個步驟可直接單步執行或從該步驟開始執行。</p></div><div class="step-toolbar-actions"><button class="text-button" id="enableAllStepsButton" type="button">全部啟用</button><button class="text-button" id="disableAllStepsButton" type="button">全部停用</button><button class="text-button" id="addNavigateButton" type="button">＋ 加入步驟</button></div></div>
               <div class="workflow-canvas" id="workflowCanvas"></div>
             </section>
 
@@ -226,10 +236,16 @@
               <div id="stepProperties" class="empty-state compact">請從中間選取一個流程步驟。</div>
             </aside>
           </div>
-          <section class="debug-drawer">
-            <div class="debug-tabs"><button class="active" data-debug-tab="log">執行日誌</button><button data-debug-tab="console">Console</button><button data-debug-tab="network">Network</button><button data-debug-tab="popup">Popup / Download</button><button data-debug-tab="variables">變數</button></div>
-            <pre id="designerDebug">尚未執行。執行結果與錯誤摘要會顯示在這裡。</pre>
-          </section>
+          <details class="debug-drawer" id="designerDebugDrawer">
+            <summary class="debug-drawer-toggle" aria-controls="designerDebugContent" title="展開或收合執行資訊">
+              <span class="debug-drawer-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg><span>執行資訊</span></span>
+              <span class="debug-drawer-expand-label">展開</span><span class="debug-drawer-collapse-label">收合</span>
+            </summary>
+            <div id="designerDebugContent">
+              <div class="debug-tabs"><button class="active" data-debug-tab="log">執行日誌</button><button data-debug-tab="console">Console</button><button data-debug-tab="network">Network</button><button data-debug-tab="popup">Popup / Download</button><button data-debug-tab="variables">變數</button></div>
+              <pre id="designerDebug">尚未執行。執行結果與錯誤摘要會顯示在這裡。</pre>
+            </div>
+          </details>
         </section>
 
         <section class="view" id="parametersView">
@@ -324,9 +340,9 @@
               <div class="batch-table-wrap" id="batchTableWrap"><table class="data-table batch-table"><thead id="batchHead"></thead><tbody id="batchBody"></tbody></table></div>
               <div class="empty-state compact batch-empty-state" id="batchEmptyState" hidden>尚未建立批次內容。請使用「＋ 新增一列」加入第一筆批次資料。</div>
             </section>
-            <section class="card advanced-card">
-              <div class="section-heading advanced-heading"><div><h2>進階設定</h2><p>依用途分組顯示執行節奏、容錯與 Debug 設定；變更後會自動儲存。</p></div><span class="badge neutral">自動儲存</span></div>
-              <div class="batch-settings-grid">
+            <details class="card advanced-card" id="batchAdvancedSettings">
+              <summary class="section-heading advanced-heading batch-advanced-toggle" aria-controls="batchAdvancedContent"><div><h2>進階設定</h2><p>依用途分組顯示執行節奏、容錯與 Debug 設定；變更後會自動儲存。</p></div><span class="batch-advanced-actions"><span class="badge neutral">自動儲存</span><span class="batch-advanced-expand-label">展開</span><span class="batch-advanced-collapse-label">收合</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span></summary>
+              <div class="batch-settings-grid" id="batchAdvancedContent">
                 <section class="batch-setting-group">
                   <div class="batch-setting-title"><b>執行節奏</b><small>控制操作速度與重播方式</small></div>
                   <label class="switch-field"><input id="safePlayback" type="checkbox" /><span><b>保守重播模式</b><small>固定節流、等待頁面穩定並避免重複導頁；不修改瀏覽器指紋。</small></span></label>
@@ -336,14 +352,14 @@
                 <section class="batch-setting-group">
                   <div class="batch-setting-title"><b>容錯與並行</b><small>控制失敗重試與工作站保護</small></div>
                   <label class="field"><span>失敗重試次數</span><input id="maxRetries" type="number" min="0" max="5" /><small>建議 0–1 次，避免重複送出相同操作。</small></label>
-                  <label class="field"><span>同時執行數</span><input value="1" disabled /><small>固定為 1，保護同一登入工作站。</small></label>
+                  <label class="field"><span>同時執行數</span><select id="defaultConcurrency"><option value="1">1（依序執行）</option><option value="2">2</option><option value="3">3</option></select><small id="batchConcurrencyHint">上限 3；並行使用獨立工作站，首次可能需要分別登入。</small></label>
                 </section>
                 <section class="batch-setting-group">
                   <div class="batch-setting-title"><b>Debug 與保存</b><small>控制失敗診斷資料的保存方式</small></div>
                   <label class="field"><span>截圖保存</span><select id="screenshotMode"><option value="failure">僅失敗</option><option value="everyStep">每一步</option><option value="never">不保存</option></select><small>一般批次建議使用「僅失敗」。</small></label>
                 </section>
               </div>
-            </section>
+            </details>
           </div>
         </section>
 
@@ -401,7 +417,6 @@
               <label class="field"><span>執行紀錄保留天數</span><input id="runHistoryRetentionDays" type="number" min="1" max="365" /><small>與 Debug 保留天數分開設定；只清理已完成、失敗或取消的紀錄。</small></label>
               <label class="field full"><span>預設下載路徑</span><input id="downloadDirectory" /></label>
               <label class="field"><span>Debug 保存方式</span><select id="debugRetention"><option value="failures">僅失敗任務</option><option value="all">全部任務</option></select><small>「僅失敗任務」會在成功任務完成後，只刪除該次 run 自己的 Debug；失敗／取消任務依保留天數處理。</small></label>
-              <label class="switch-field"><input id="autoOpenBrowser" type="checkbox" /><span><b>啟動時自動開啟介面</b></span></label>
               <label class="field full"><span>問題回報收件信箱</span><input id="issueReportEmail" type="email" placeholder="例如 automation-support@example.gov.tw" /><small>「回報問題」會以此信箱作為預設收件人；可由系統管理者在每台電腦設定。</small></label>
             </div>
             <div class="debug-cleanup-panel" id="debugCleanupPanel">
@@ -461,7 +476,7 @@
             <div>
               <span class="kicker">QUICK START & KNOWLEDGE BASE</span>
               <h2>Automation Studio 使用說明</h2>
-              <p>從建立專案、錄製操作、參數化、測試除錯，到批次執行與發布，用一頁快速掌握完整工作方式。</p>
+              <p>依 2.0.2 版介面整理：從專案與錄製、流程編輯、保存頁面 PDF，到測試、批次匯入匯出與發布。下方操作細節可按標題展開。</p>
             </div>
             <div class="help-hero-actions"><button class="button primary" data-go="workstation" type="button">開始設定專案</button><button class="button secondary" data-go="test" type="button">前往測試與 Debug</button></div>
           </section>
@@ -482,9 +497,10 @@
             <section class="card help-section">
               <div class="section-heading"><div><h2>主要操作說明</h2><p>依功能頁面快速找到正確操作方式。</p></div></div>
               <div class="guide-list">
-                <article class="guide-article-expandable"><span class="guide-icon">站</span><div><b>網站與工作站</b><p>先設定入口網址與允許網域。需要人工登入、MFA 或驗證碼時，建議使用可見瀏覽器；若要接管已登入 Chrome，使用 CDP 模式。</p><div class="guide-inline-details"><details><summary>舊式 Frame／SmartKMS 網站如何錄製？</summary><div class="guide-inline-content"><p>V1.2.1 保留 V1.1.6 的多 Frame 錄製與事件保留機制：錄製事件使用 Playwright Binding、Frame Bridge 與 Console Beacon 備援，工作站事件清單使用 Server-Sent Events 即時串流。SmartKMS 事件會保留子 Frame 路徑，並在必要時使用跨 Frame fallback。</p></div></details></div></div></article>
-                <article><span class="guide-icon">流</span><div><b>自動化設計器</b><p>錄製後逐步檢查步驟名稱、selector 與等待條件。重複元件可使用 first／last／nth；動態頁面宜加入「等待顯示」而非只使用固定秒數。</p></div></article>
-                <article><span class="guide-icon">參</span><div><b>參數與資料</b><p>把年度、階段、報表名稱等可變內容改成參數。固定選項使用下拉選單；相依欄位可使用父子下拉，批次任務會沿用相同參數定義。</p></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">站</span><div><b>網站與瀏覽器工作站</b><p>設定入口網址、允許網域及瀏覽器模式，再儲存專案設定。登入、跳轉或下載若使用其他網域，也要加入允許清單；子網域可明確使用 <code>*.example.com</code>。</p><div class="guide-inline-details"><details><summary>管理瀏覽器、CDP 與背景模式</summary><div class="guide-inline-content"><p><b>管理瀏覽器：</b>可選隨附 Chromium 或本機 Google Chrome；保存瀏覽器 Profile 可保留本機登入狀態，清除登入狀態會重設專案的登入資料。</p><p><b>背景模式（無頭模式／headless）：</b>可用於管理瀏覽器的流程執行。錄製仍會顯示瀏覽器；需要人工登入、MFA 或驗證碼的流程請使用可見瀏覽器。</p><p><b>Chrome CDP 接管：</b>連線至本機 Chrome 的偵錯端點，只允許 localhost、127.0.0.1 或 ::1。可設定端點無法連線時自動啟動 Chrome；背景模式不適用，流程結束後不會關閉使用者的 Chrome。</p><p><b>Stealth：</b>依專案選擇啟用，適用於管理瀏覽器的錄製、執行及匯出 TypeScript；CDP 接管不適用，也不保證通過網站驗證。</p></div></details><details><summary>錄製操作與 Frame／上傳</summary><div class="guide-inline-content"><p>啟動錄製後在瀏覽器實際操作，事件會即時顯示於工作站清單；確認事件後加入流程步驟，完成後停止錄製。Enter、Tab 及組合按鍵會記錄，密碼欄位的值不保存。</p><p>子 Frame 操作會保留 Frame 路徑。重新執行找不到元件時，檢查步驟的 Frame 設定與跨 Frame 搜尋。可用「選取驗證元素」建立可見、文字或欄位值驗證。</p><p>上傳事件只保存檔名，加入流程後須補填完整本機路徑並啟用步驟；多個檔案一行一個。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">流</span><div><b>自動化設計器</b><p>階層清單及視覺畫布中，單擊只選取步驟，雙擊才開啟步驟設定。修改後套用步驟，並儲存專案。</p><div class="guide-inline-details"><details><summary>排序、收折與全螢幕</summary><div class="guide-inline-content"><p><b>拖曳排序：</b>在階層清單按住整張步驟卡片片刻後拖曳；放到目標卡上緣會插入前方，中央會交換位置，下緣會插入後方。排序限同一層級及同一分支，父步驟的子流程會一併保留；也可用上移／下移按鈕。</p><p><b>條件分支：</b>True／False 分支可各自收折，標題顯示步驟數。視覺畫布按「全螢幕」放大檢視，按 Esc 或退出按鈕返回。</p><p><b>動作元件：</b>預設收折，可手動展開或收合；滑鼠連續停留約 0.8 秒會暫時顯示完整清單，短暫經過不會展開。</p><p><b>執行資訊：</b>下方預設收折，執行時也不會自動展開。需要除錯時再查看日誌、Console、Network、Popup／Download 與變數；這些是目前執行的資訊，不是選取步驟的設定。</p></div></details><details><summary>選取元件與等待</summary><div class="guide-inline-content"><p>檢查 selector 與 Frame 路徑，重複元件可使用 first／last／nth。動態頁面優先加入「等待顯示」、等待網址或 Network Idle，避免只靠固定秒數。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">印</span><div><b>保存頁面 PDF</b><p>新增原生「保存頁面 PDF」動作，將目前頁面列印為 PDF，無須 selector。Studio 執行時存至「系統設定 → 預設下載路徑」，同名檔案會另編名稱避免覆蓋。</p><div class="guide-inline-details"><details><summary>檔名、版面、頁首／頁尾與縮放</summary><div class="guide-inline-content"><p><b>檔名：</b>可自訂，例如 <code>台灣銀行決算_品質檢測結果_20261007_103000.pdf</code>，也可使用 <code>{{參數}}</code>。自動使用本機時間命名預設啟用，時間取自執行電腦。</p><p><b>版面：</b>A4／Letter、直向／橫向、是否包含背景色、上／右／下／左邊界（各 0–50 mm），以及 10%–200% 縮放比例。</p><p><b>頁首／頁尾：</b>啟用輸出後填入 HTML 範本，並預留足夠的上下邊界。只填範本但未啟用，不會輸出頁首／頁尾。</p><p><b>完整頁面：</b>預設啟用，內容會依紙張尺寸分頁，可能產生多頁 PDF。網站的列印樣式也會影響輸出，請檢查實際 PDF 的版面。</p><p>設定後套用步驟再測試，執行日誌會顯示實際採用的紙張、方向、縮放與頁首／頁尾狀態。此功能與下載網站提供的 PDF 檔案不同。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">參</span><div><b>參數與資料</b><p>以 <code>{{year}}</code> 等參數代換網址、selector 或填值。參數 Key 須以英文字母或底線開頭，後接英數字或底線，且不可重複。</p><div class="guide-inline-details"><details><summary>預設值、相依選項與敏感參數</summary><div class="guide-inline-content"><p>依資料設定型別、必填、預設值與固定選項；父子相依下拉選單及批次任務使用同一份定義。新增批次列會帶入非敏感參數的預設值；執行前仍須確認必填資料與相依選項。</p><p>密碼等資料請使用 secret 型別或標記為敏感。發布會清空這些參數的預設值，但一般文字與直接寫在步驟中的值仍會保留，請在發布前檢查。</p></div></details></div></div></article>
                 <article class="guide-article-expandable"><span class="guide-icon">測</span><div><b>測試與 Debug</b><p>先選擇適合的執行範圍驗證流程；執行失敗時可用內建 AI 分析，或下載遮罩後的診斷包提供外部 AI／支援人員。</p>
                   <div class="guide-inline-details">
                     <details>
@@ -518,8 +534,9 @@
                     </details>
                   </div>
                 </div></article>
-                <article><span class="guide-icon">批</span><div><b>批次任務</b><p>建立多筆參數組合後依序執行。需要人工登入的流程，建議只保留一個穩定的人工登入檢查點，後續批次可沿用同一瀏覽器工作階段。</p></div></article>
-                <article class="guide-article-expandable"><span class="guide-icon">發</span><div><b>發布與版本</b><p>確認入口網址、允許網域與啟用步驟後，再輸出可攜工作流程、TypeScript 或 SKILL.md。匯出時不會攜出密碼、Cookie 或瀏覽器 Profile。</p><div class="guide-inline-details"><details><summary>系統版本與專案版本怎麼區分？</summary><div class="guide-inline-content"><p><b>Automation Studio 系統版本</b>採 MAJOR.MINOR.PATCH：重大不相容變更升 MAJOR、新增一組使用者功能升 MINOR、修正與小幅改善升 PATCH。目前系統版本為 <b>1.2.1</b>。<b>專案版本號</b>則屬於個別工作流程，可由使用者自行管理，兩者互不影響。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">批</span><div><b>批次任務</b><p>每列代表一組執行參數。「編號／執行」欄的勾選決定是否執行，欄位標題的勾選框可全選或全取消所有列，包括未捲動到的列。左側資料列選取用於複製、批次修改與刪除。</p><div class="guide-inline-details"><details><summary>編輯與匯入／匯出批次內容</summary><div class="guide-inline-content"><p>雙擊或按 Enter 編輯儲存格，方向鍵／Tab 移動，Ctrl／Cmd+V 可貼上 Excel 範圍。拖曳欄名可排序，拖曳分隔線調整寬度。</p><p><b>匯出批次內容：</b>支援 JSON 及 UTF-8 CSV，匯出整份清單（包含未勾選列），敏感參數不匯出。JSON 保存型別與執行勾選，適合備份；CSV 欄名使用參數 Key，<code>__studio_enabled</code> 為 true／false，匯入時省略則預設啟用。Excel 編輯代碼欄請使用文字格式保留前導零。</p><p><b>匯入批次內容：</b>先檢查資料，再選「加入目前清單」或「取代目前清單」。欄位、型別或相依選項錯誤時不變更原清單；未填完的必填內容可作為草稿匯入，執行前仍須補齊。每次上限 5 MB、10,000 筆。</p></div></details><details><summary>進階設定與 1–3 筆並行</summary><div class="guide-inline-content"><p>進階設定預設收折，按標題展開後可調整重試、播放方式、最小步驟間隔、截圖及同時執行數，變更會自動儲存。</p><p><b>管理瀏覽器：</b>預設 1 筆依序執行，可改為 2 或 3。並行批次各用獨立瀏覽器工作站；首次可能需要各自登入，之後同一工作站沿用批次工作階段及已完成的人工登入檢查點。執行紀錄標示工作站編號，暫停時完成操作後按繼續。</p><p><b>Chrome CDP：</b>共用既有瀏覽器，固定 1 筆依序執行。網站若限制同帳號多重登入，管理模式也請選 1；登入逾期或工作階段重建時可能需重新驗證。系統最多同時執行 3 筆，超過的任務等待排程。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">發</span><div><b>發布與版本</b><p>測試完整流程後再發布。可攜工作流程 ZIP 可匯入另一台 Automation Studio；TypeScript 可獨立執行；SKILL.md 提供使用指引。瀏覽器 Profile、Cookie 與登入工作階段不會攜出，敏感參數預設值會清空；一般文字或步驟內直接填入的資料仍會保留。</p><div class="guide-inline-details"><details><summary>系統版本與專案版本怎麼區分？</summary><div class="guide-inline-content"><p><b>Automation Studio 系統版本</b>採 MAJOR.MINOR.PATCH；第二、第三段限定 0–9，超過 9 向前進位，例如 1.9.0 → 2.0.0、2.0.9 → 2.1.0。新增功能升 MINOR，修正升 PATCH。目前系統版本為 <b>2.0.2</b>。<b>專案版本號</b>則屬於個別工作流程，可由使用者自行管理，兩者互不影響。進位至新主版不代表流程資料不相容。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">設</span><div><b>系統設定與開發者功能</b><p>系統設定可調整外觀、預設下載路徑、紀錄保留及支援信箱；AI Provider 可展開後設定。服務啟動就緒後固定自動開啟介面，沒有取消選項，與流程背景模式分開管理。</p><div class="guide-inline-details"><details><summary>執行紀錄、Debug 清理與工作流程原始碼</summary><div class="guide-inline-content"><p>「執行紀錄」可展開結果、下載檔案及開啟資料夾，失敗且仍有 Debug 資料時可下載診斷包。Debug 與執行紀錄的保留天數分開設定；僅失敗保留模式會移除成功任務的 Debug。可手動清理過期資料，刪除執行紀錄不會刪除已下載的檔案。</p><p>「開發者功能」中的 AI 流程助理可探索頁面並建立可編輯草稿，請檢查修改後再送出及測試；AI 呼叫依 Provider 設定可能需要網路。「工作流程原始碼」提供 JSON 編輯，按「套用 JSON」檢查基本結構，不可更換目前專案 ID；修改後仍須實際測試。</p></div></details></div></div></article>
               </div>
             </section>
 
@@ -529,8 +546,8 @@
                 <li><b>元件找不到：</b>確認 selector 是否使用動態 class／id，優先使用文字、label、role 或穩定屬性。</li>
                 <li><b>頁面尚未載入：</b>用等待顯示／等待網址／Network Idle 取代過短固定延遲。</li>
                 <li><b>登入後卡住：</b>將登入設為人工操作，完成條件使用按鈕或穩定的登入後網址。</li>
-                <li><b>PDF 只開預覽：</b>可使用下載步驟或啟用「PDF 直接下載，不開啟預覽」。</li>
-                <li><b>批次第二筆失敗：</b>檢查是否重複執行登入、關閉分頁或破壞共用瀏覽器工作階段。</li>
+                <li><b>PDF 版面不符：</b>確認使用「保存頁面 PDF」、套用後的縮放與頁首／頁尾設定、邊界及網站列印樣式；網站 PDF 下載則檢查下載步驟。</li>
+                <li><b>批次登入問題：</b>檢查各工作站是否完成登入、是否重複關閉分頁，以及網站是否限制多重登入；必要時改為 1 筆依序執行。</li>
               </ol>
             </section>
           </div>
@@ -539,26 +556,27 @@
             <div class="section-heading"><div><h2>常見問題 FAQ</h2><p>點擊問題即可展開答案。</p></div></div>
             <div class="faq-list">
               <details><summary>為什麼錄製成功，但重新執行時找不到按鈕？</summary><p>通常是 selector 過度依賴動態 class、暫時 id 或頁面尚未完成載入。建議在自動化設計器改用穩定文字／role／label，並在前一步加入適當等待。</p></details>
-              <details><summary>帳號、密碼、Cookie 會被匯出嗎？</summary><p>不會。專案匯出會移除敏感預設值，也不包含瀏覽器 Profile、Cookie 或登入工作階段。登入與 MFA 建議由使用者在瀏覽器中人工完成。</p></details>
+              <details><summary>帳號、密碼、Cookie 會被匯出嗎？</summary><p>匯出會清空標記為敏感或 secret 型別的參數預設值，且不包含瀏覽器 Profile、Cookie 或登入工作階段。一般參數與直接寫在步驟中的文字仍會保留，因此帳密請改用敏感參數，發布前再檢查內容。批次內容匯出也會省略敏感參數。</p></details>
               <details><summary>CDP 模式與 Automation Studio 管理瀏覽器有什麼差別？</summary><p>管理模式由系統建立專用瀏覽器與 Profile；CDP 模式接管本機已開啟的 Chrome，適合需要沿用既有登入狀態的網站。流程結束時只解除控制，不會主動關閉外部 Chrome。</p></details>
               <details><summary>為什麼下載 PDF 時只看到預覽頁？</summary><p>Chrome 可能使用內建 PDF Viewer。可在網站與工作站啟用「PDF 直接下載，不開啟預覽」，或將流程步驟改成下載並使用 auto/click 模式。</p></details>
-              <details><summary>批次任務中需要每筆都重新登入嗎？</summary><p>通常不需要。若流程設計為單一人工登入檢查點，批次工作可重用同一瀏覽器工作階段；但網站若主動登出或登入逾期，仍可能需要重新驗證。</p></details>
+              <details><summary>批次任務中需要每筆都重新登入嗎？</summary><p>同一批次工作站可沿用瀏覽器工作階段及已完成的人工登入檢查點。2–3 筆並行使用各自獨立的工作站，首次可能需分別登入；網站登出、登入逾期或工作階段重建時仍需重新驗證。</p></details>
               <details><summary>如何判斷錯誤發生在哪裡？</summary><p>先看「測試與 Debug」的執行錯誤與步驟結果，再依情況查看 Console、Network、Popup/Download 或變數。歷史任務也可在「執行紀錄」展開詳情查看。</p></details>
               <details><summary>「只執行此步驟」與「從此步驟執行」有什麼差別？</summary><p>「只執行此步驟」只測目前選取的單一步驟；「從此步驟執行」會從選取步驟開始繼續執行後續流程。兩者都不會自動重跑選取步驟之前的登入、導頁、搜尋或變數建立，因此使用前要先準備好正確的瀏覽器與資料狀態。</p></details>
-              <details><summary>可以把一份流程搬到另一台電腦嗎？</summary><p>可以，使用「發布與版本」輸出可攜工作流程 ZIP，再由另一台 Automation Studio 匯入。登入狀態、帳密與本機 Profile 不會一起移轉。</p></details>
+              <details><summary>可以把一份流程搬到另一台電腦嗎？</summary><p>可以，使用「發布與版本」輸出可攜工作流程 ZIP，再由另一台 Automation Studio 匯入。登入狀態與本機 Profile 不會一起移轉，敏感參數需在目的端補填；步驟內的本機檔案路徑也要重新確認。</p></details>
               <details><summary>如何使用「發布與版本」輸出的 TypeScript 專案獨立執行？需要哪些 Node.js 套件？</summary>
-                <p>發布時勾選 TypeScript 後，匯出的 <code>typescript-project</code> 資料夾本身就是可獨立執行的 Playwright 專案，不需要再開啟 Automation Studio。此版本實際需要的 npm 套件只有 <code>playwright</code>；不需要另外安裝 <code>typescript</code> 或 <code>ts-node</code>，因為 <code>start.bat</code> 會使用 Node.js 的 <code>--experimental-strip-types</code> 直接執行 <code>src/run.ts</code>。</p>
+                <p>發布時勾選 TypeScript 後，匯出的 <code>typescript-project</code> 資料夾本身就是可獨立執行的 Playwright 專案，不需要再開啟 Automation Studio。基本相依套件為 <code>playwright</code>；若管理瀏覽器啟用 Stealth，還會包含 <code>playwright-extra</code> 與 <code>puppeteer-extra-plugin-stealth</code>。依匯出的 <code>package.json</code> 安裝即可，不需要另外安裝 <code>typescript</code> 或 <code>ts-node</code>，因為 <code>start.bat</code> 會使用 Node.js 的 <code>--experimental-strip-types</code> 直接執行 <code>src/run.ts</code>。</p>
                 <ol class="faq-steps">
-                  <li><b>準備 Node.js：</b>建議使用 Node.js 22.6 以上，優先使用目前公司核准的 Node.js 22／24 LTS 64 位元版本。安裝後在命令提示字元執行 <code>node -v</code> 與 <code>npm -v</code> 確認可用。</li>
+                  <li><b>準備 Node.js：</b>需要支援 <code>--experimental-strip-types</code> 的 Node.js（Node.js 22.6 以上），也須符合匯出套件的執行環境要求。使用公司核准的 Node.js 版本。安裝後在命令提示字元執行 <code>node -v</code> 與 <code>npm -v</code> 確認可用。</li>
                   <li><b>取得 Node.js：</b>可由 Node.js 官方網站下載 Windows 安裝版；公司電腦若無管理者權限，可使用資訊單位提供的軟體中心，或下載官方 Windows ZIP 版解壓縮後使用，並將該資料夾加入目前工作階段的 PATH。</li>
-                  <li><b>安裝專案套件：</b>解壓縮發布檔後進入 <code>typescript-project</code> 資料夾，執行 <code>npm install</code>。npm 會依 <code>package.json</code> 下載本專案指定的 <code>playwright</code> 套件。</li>
+                  <li><b>安裝專案套件：</b>解壓縮發布檔後進入 <code>typescript-project</code> 資料夾，執行 <code>npm install</code>。npm 會依 <code>package.json</code> 安裝 Playwright 及啟用 Stealth 時的額外套件。</li>
                   <li><b>準備瀏覽器：</b>若流程使用 Playwright 隨附 Chromium，再執行 <code>npx playwright install chromium</code>。若專案設定使用本機 Chrome，且 Chrome 已安裝，通常不需要下載 Chromium。</li>
-                  <li><b>設定參數：</b>若匯出內容有 <code>parameters.example.json</code>，可複製成 <code>parameters.json</code> 後填入需要的值；沒有提供的參數則會沿用流程中非敏感的預設值。密碼、Cookie、MFA 等敏感資料不會被發布檔自動帶出。</li>
-                  <li><b>執行：</b>Windows 可直接執行 <code>start.bat</code>；也可在命令列執行 <code>npm start</code>。流程若包含人工登入、MFA 或驗證碼，仍需依流程設計人工完成。</li>
+                  <li><b>設定參數：</b>若發布時勾選範例，將 <code>parameters.example.json</code> 複製成根目錄的 <code>parameters.json</code> 後填值；沒有範例時自行建立 JSON 物件，欄位名稱須對應參數 Key。未提供的參數沿用非敏感預設值，敏感參數需自行補填。</li>
+                  <li><b>執行：</b>Windows 可直接執行 <code>start.bat</code>；也可在命令列執行 <code>npm start</code>。流程若包含人工登入、MFA 或驗證碼，請使用可見瀏覽器並人工完成；匯出的命令列流程若以按鈕確認人工步驟，依終端提示按 Enter 繼續。</li>
                 </ol>
+                <p><b>下載位置：</b>匯出的專案不會自動讀取 Studio 系統設定。「保存頁面 PDF」使用 <code>DOWNLOAD_DIR</code> 環境變數，未設定時存入執行目錄的 <code>downloads</code>。</p>
                 <div class="faq-note"><b>離線／內網環境：</b>如果執行電腦無法連到 npm 或 Playwright 下載站，應先在可連網環境完成 <code>npm install</code> 與需要的瀏覽器安裝，再依單位軟體供應政策準備離線套件；不要為了繞過公司憑證而關閉 TLS 驗證。</div>
               </details>
-              <details><summary>遇到無法自行排除的問題怎麼辦？</summary><p>使用左側「回報問題」，填寫重現步驟與實際結果。系統會建立寄到預設支援信箱的郵件內容；必要時可另外附上不含敏感資料的畫面截圖。</p></details>
+              <details><summary>遇到無法自行排除的問題怎麼辦？</summary><p>使用左側「回報問題」，填寫重現步驟與實際結果。系統會開啟預設郵件程式中的草稿，需自行確認並寄送；沒有郵件程式時可複製回報內容。必要時另附經檢查的畫面截圖。</p></details>
             </div>
           </section>
 
@@ -574,7 +592,7 @@
                 <div class="arch-layer"><strong>瀏覽器控制層</strong><div><span>Playwright</span><span>Managed Browser</span><span>Chrome CDP</span><span>Popup / Network</span></div></div>
               </div>
               <div class="arch-arrow">↓</div>
-              <div class="arch-layer local-storage"><strong>本機資料與安全邊界</strong><div><span>專案 JSON</span><span>執行紀錄</span><span>Debug 資料</span><span>下載檔案</span><span>專用 Browser Profile</span></div><small>帳密、MFA、Cookie 與瀏覽器登入狀態不隨可攜 ZIP 匯出。</small></div>
+              <div class="arch-layer local-storage"><strong>本機資料與安全邊界</strong><div><span>專案 JSON</span><span>執行紀錄</span><span>Debug 資料</span><span>下載檔案</span><span>專用 Browser Profile</span></div><small>可攜 ZIP 不含瀏覽器登入狀態，並清空敏感參數預設值；一般文字及步驟內的值需自行檢查。</small></div>
             </div>
           </section>
         </section>
@@ -600,7 +618,7 @@
             <aside class="card report-preview-card">
               <div class="section-heading"><div><h2>將自動附帶</h2><p>協助支援人員快速辨識環境，不包含敏感資料。</p></div></div>
               <ul class="report-context-list">
-                <li><b>系統版本</b><span>Automation Studio V1.2.1</span></li>
+                <li><b>系統版本</b><span>Automation Studio V2.0.2</span></li>
                 <li><b>目前專案</b><span id="reportProjectName">—</span></li>
                 <li><b>專案 ID</b><span id="reportProjectId">—</span></li>
                 <li><b>瀏覽器模式</b><span id="reportBrowserMode">—</span></li>
@@ -613,7 +631,7 @@
 
         <section class="view" id="developerView">
           <section class="card developer-card">
-            <div class="section-heading"><div><h2>原始工作流程 JSON</h2><p>進階使用者可直接編輯；儲存前會驗證基本結構。</p></div><div><button class="button secondary small" id="copyJsonButton" type="button">複製</button><button class="button primary small" id="saveJsonButton" type="button">套用 JSON</button></div></div>
+            <div class="section-heading"><div><h2>工作流程原始碼</h2><p>進階使用者可直接編輯；儲存前會驗證基本結構。</p></div><div><button class="button secondary small" id="copyJsonButton" type="button">複製</button><button class="button primary small" id="saveJsonButton" type="button">套用 JSON</button></div></div>
             <textarea id="workflowJson" spellcheck="false"></textarea>
           </section>
         </section>
@@ -631,6 +649,10 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js" type="module"></script>
+    <script src="./app.js"></script>
+  <!-- MODERN START -->
+    <script src="/bridge.js"></script>
+    <script type="module" src="/modern/studio.js?v=2.0.2"></script>
+    <!-- MODERN END -->
   </body>
 </html>

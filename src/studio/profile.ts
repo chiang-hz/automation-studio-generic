@@ -12,6 +12,11 @@ export function resolveProjectProfileDir(projectId: string): string {
   return path.resolve("./data/profiles", safe);
 }
 
+export function resolveBatchWorkerProfileDir(projectId: string, worker: number): string {
+  if (!Number.isInteger(worker) || worker < 1 || worker > 3) throw new Error("批次工作站編號必須為 1–3。");
+  return path.join(resolveProjectProfileDir(projectId), "batch-workers", String(worker));
+}
+
 export async function getBrowserProfileStatus(projectId: string, enabled: boolean): Promise<BrowserProfileStatus> {
   const profileDir = resolveProjectProfileDir(projectId);
   let hasData = false;

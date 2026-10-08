@@ -1489,3 +1489,6 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+.status-pill.cancelling { background: #fff3cd; color: #805b0b; }
+.status-pill.cancelled { background: #e9ecef; color: #495057; }

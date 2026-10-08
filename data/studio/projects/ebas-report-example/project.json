@@ -20,6 +20,7 @@
     "downloadTimeoutMs": 60000,
     "viewportWidth": 1440,
     "viewportHeight": 900,
+    "stealth": false,
     "reuseProfile": true,
     "downloadPdfInsteadOfPreview": false,
     "cdpEndpoint": "http://127.0.0.1:9222",
@@ -184,6 +185,6 @@
     "EBAS",
     "ExtJS"
   ],
-  "createdAt": "2026-10-03T03:02:11.203Z",
-  "updatedAt": "2026-10-03T03:02:11.204Z"
+  "createdAt": "2026-10-08T14:27:54.898Z",
+  "updatedAt": "2026-10-08T14:27:54.899Z"
 }

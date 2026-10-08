@@ -1,0 +1,22 @@
+# Generated bundle artifacts and web distribution builds
+public/modern/
+public/legacy/
+public/app.js
+public/bridge.js
+*.min.js
+*.map
+
+# Build, node and runtime directories
+node_modules/
+dist/
+.git/
+.playwright-mcp/
+.auth/
+debug/
+downloads/
+coverage/
+verification/
+visual-review/
+
+# Graphify outputs
+graphify-out/

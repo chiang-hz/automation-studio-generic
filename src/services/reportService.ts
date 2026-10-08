@@ -17,7 +17,10 @@ import type {
 import type { ReportAdapter } from "../adapters/reportAdapter.ts";
 import { parseDownloadedReport } from "../parsers/reportParser.ts";
 
+import { normalizeBrowserMode, type BrowserMode } from "../domain/browserMode.ts";
+
 export interface CreateDownloadTaskOptions {
+  browserMode?: BrowserMode;
   debugEnabled?: boolean;
 }
 
@@ -31,6 +34,7 @@ export interface CreateBatchDownloadTaskOptions extends CreateDownloadTaskOption
 }
 
 export class ReportService {
+  private readonly controllers = new Map<string, AbortController>();
   private readonly adapter: ReportAdapter;
   private readonly taskStore: TaskStore;
   private readonly batchTasks = new Map<string, BatchDownloadTask>();
@@ -57,6 +61,7 @@ export class ReportService {
     parameters: ReportParameters,
     options: CreateDownloadTaskOptions = {}
   ): Promise<DownloadTask> {
+    const browserMode = normalizeBrowserMode(options.browserMode);
     const definitions = await this.adapter.getReportParameters(reportId);
     const normalizedParameters = this.applyParameterDefaults(definitions, parameters);
     this.validateParameters(definitions, normalizedParameters);
@@ -67,12 +72,14 @@ export class ReportService {
       reportId,
       parameters: normalizedParameters,
       debugEnabled: Boolean(options.debugEnabled),
+      browserMode,
       status: "queued",
       createdAt: now,
       updatedAt: now
     });
 
-    void this.runDownload(task.id, reportId, normalizedParameters, Boolean(options.debugEnabled));
+    this.controllers.set(task.id, new AbortController());
+    void this.runDownload(task.id, reportId, normalizedParameters, Boolean(options.debugEnabled), browserMode);
     return task;
   }
 
@@ -80,6 +87,7 @@ export class ReportService {
     items: BatchDownloadItemInput[],
     options: CreateBatchDownloadTaskOptions = {}
   ): Promise<BatchDownloadTask> {
+    const browserMode = normalizeBrowserMode(options.browserMode);
     if (!Array.isArray(items) || items.length === 0) {
       throw new FlowError(ErrorCodes.INVALID_PARAMETERS, "Batch download requires at least one item.");
     }
@@ -106,9 +114,11 @@ export class ReportService {
         id: crypto.randomUUID(),
         reportId: item.reportId,
         parameters: item.parameters,
-        status: "queued"
+        status: "queued",
+        browserMode
       })),
       debugEnabled: Boolean(options.debugEnabled),
+      browserMode,
       continueOnError: options.continueOnError !== false,
       parallelism: normalizeParallelism(options.parallelism),
       retryEnabled: options.retryEnabled !== false,
@@ -122,9 +132,32 @@ export class ReportService {
       skippedCount: 0
     };
 
+    this.controllers.set(task.id, new AbortController());
     this.batchTasks.set(task.id, task);
     void this.runBatchDownload(task.id, options.workerStorageStatePaths ?? {});
     return task;
+  }
+
+  cancelDownloadTask(taskId: string): DownloadTask {
+    const task = this.getDownloadTask(taskId);
+    if (!["queued", "running"].includes(task.status)) return task;
+    const next = this.taskStore.update(taskId, { status: "cancelling" })!;
+    this.controllers.get(taskId)?.abort();
+    return next;
+  }
+
+  cancelBatchDownloadTask(taskId: string): BatchDownloadTask {
+    const task = this.getBatchDownloadTask(taskId);
+    if (!["queued", "running"].includes(task.status)) return task;
+    const items = task.items.map(item => ({
+      ...item,
+      status: item.status === "queued" ? "cancelled" as const
+        : ["running", "retrying"].includes(item.status) ? "cancelling" as const : item.status,
+      nextRetryAt: undefined
+    }));
+    const next = this.updateBatchTask(taskId, { status: "cancelling", items, cancelledCount: countItems(items, "cancelled") });
+    this.controllers.get(taskId)?.abort();
+    return next;
   }
 
   getDownloadTask(taskId: string): DownloadTask {
@@ -156,7 +189,7 @@ export class ReportService {
 
   getBatchDownloadResult(taskId: string): BatchDownloadResult {
     const task = this.getBatchDownloadTask(taskId);
-    if (!["completed", "partial_failed", "failed"].includes(task.status)) {
+    if (!["completed", "partial_failed", "failed", "cancelled"].includes(task.status)) {
       throw new FlowError(
         ErrorCodes.DOWNLOAD_FAILED,
         `Batch task ${taskId} is not finished. Current status: ${task.status}`
@@ -169,6 +202,7 @@ export class ReportService {
       completedCount: task.completedCount,
       failedCount: task.failedCount,
       skippedCount: task.skippedCount,
+      cancelledCount: task.cancelledCount ?? 0,
       files: task.items
         .filter((item) => item.status === "completed" && item.filePath)
         .map((item) => ({
@@ -200,60 +234,66 @@ export class ReportService {
     taskId: string,
     workerStorageStatePaths: Record<string, string>
   ): Promise<void> {
-    this.updateBatchTask(taskId, { status: "running" });
-    const initialTask = this.getBatchDownloadTask(taskId);
-    const parallelism = normalizeParallelism(initialTask.parallelism);
-    const workerIds = parallelism > 1 ? ["A", "B"].slice(0, parallelism) : ["A"];
+    const signal = this.controllers.get(taskId)!.signal;
+    try {
+      this.updateBatchTask(taskId, { status: signal.aborted ? "cancelling" : "running" });
+      const initialTask = this.getBatchDownloadTask(taskId);
+      const parallelism = normalizeParallelism(initialTask.parallelism);
+      const workerIds = parallelism > 1 ? ["A", "B"].slice(0, parallelism) : ["A"];
 
-    if (parallelism <= 1) {
-      let stoppedAfterFailure = false;
-      for (const item of this.getBatchDownloadTask(taskId).items) {
-        if (stoppedAfterFailure) {
-          this.updateBatchItem(taskId, item.id, { status: "skipped" });
-          continue;
-        }
-
-        const task = this.getBatchDownloadTask(taskId);
-        const workerId = "A";
-        const failed = await this.runBatchItem(taskId, item.id, workerId, workerStorageStatePaths[workerId], Boolean(task.debugEnabled));
-        if (failed && !task.continueOnError) {
-          stoppedAfterFailure = true;
-        }
-      }
-    } else {
-      const queue = [...this.getBatchDownloadTask(taskId).items];
-      let stopRequested = false;
-
-      const runWorker = async (workerId: string): Promise<void> => {
-        while (queue.length > 0) {
-          const item = queue.shift();
-          if (!item) return;
-          const task = this.getBatchDownloadTask(taskId);
-
-          if (stopRequested) {
+      if (parallelism <= 1) {
+        let stoppedAfterFailure = false;
+        for (const item of this.getBatchDownloadTask(taskId).items) {
+          if (signal.aborted) { this.updateBatchItem(taskId, item.id, { status: "cancelled", nextRetryAt: undefined }); continue; }
+          if (stoppedAfterFailure) {
             this.updateBatchItem(taskId, item.id, { status: "skipped" });
             continue;
           }
 
+          const task = this.getBatchDownloadTask(taskId);
+          const workerId = "A";
           const failed = await this.runBatchItem(taskId, item.id, workerId, workerStorageStatePaths[workerId], Boolean(task.debugEnabled));
           if (failed && !task.continueOnError) {
-            stopRequested = true;
+            stoppedAfterFailure = true;
           }
         }
-      };
+      } else {
+        const queue = [...this.getBatchDownloadTask(taskId).items];
+        let stopRequested = false;
 
-      await Promise.all(workerIds.map((workerId) => runWorker(workerId)));
-    }
+        const runWorker = async (workerId: string): Promise<void> => {
+          while (queue.length > 0) {
+            const item = queue.shift();
+            if (!item) return;
+            const task = this.getBatchDownloadTask(taskId);
 
-    const finalTask = this.getBatchDownloadTask(taskId);
-    this.updateBatchTask(taskId, {
-      status: finalBatchStatus(finalTask),
-      completedCount: countItems(finalTask.items, "completed"),
-      failedCount: countItems(finalTask.items, "failed"),
-      skippedCount: countItems(finalTask.items, "skipped"),
-      errorCode: firstFailedItem(finalTask)?.errorCode,
-      errorMessage: firstFailedItem(finalTask)?.errorMessage
-    });
+            if (signal.aborted) { this.updateBatchItem(taskId, item.id, { status: "cancelled", nextRetryAt: undefined }); continue; }
+            if (stopRequested) {
+              this.updateBatchItem(taskId, item.id, { status: "skipped" });
+              continue;
+            }
+
+            const failed = await this.runBatchItem(taskId, item.id, workerId, workerStorageStatePaths[workerId], Boolean(task.debugEnabled));
+            if (failed && !task.continueOnError) {
+              stopRequested = true;
+            }
+          }
+        };
+
+        await Promise.all(workerIds.map((workerId) => runWorker(workerId)));
+      }
+
+      const finalTask = this.getBatchDownloadTask(taskId);
+      this.updateBatchTask(taskId, {
+        status: signal.aborted ? "cancelled" : finalBatchStatus(finalTask),
+        completedCount: countItems(finalTask.items, "completed"),
+        failedCount: countItems(finalTask.items, "failed"),
+        skippedCount: countItems(finalTask.items, "skipped"),
+        cancelledCount: countItems(finalTask.items, "cancelled"),
+        errorCode: firstFailedItem(finalTask)?.errorCode,
+        errorMessage: firstFailedItem(finalTask)?.errorMessage
+      });
+    } finally { this.controllers.delete(taskId); }
   }
 
   private async runBatchItem(
@@ -263,6 +303,7 @@ export class ReportService {
     storageStatePath: string | undefined,
     debugEnabled: boolean
   ): Promise<boolean> {
+    const signal = this.controllers.get(taskId)!.signal;
     const taskOptions = this.getBatchDownloadTask(taskId);
     const maxRetries = taskOptions.retryEnabled === false ? 0 : normalizeRetryCount(taskOptions.maxRetries);
     const retryDelaySeconds = normalizeRetryDelaySeconds(taskOptions.retryDelaySeconds);
@@ -270,6 +311,7 @@ export class ReportService {
     let lastFlowError: FlowError | undefined;
 
     while (attempt <= maxRetries) {
+      if (signal.aborted) { this.updateBatchItem(taskId, itemId, { status: "cancelled", nextRetryAt: undefined }); return false; }
       const item = this.getBatchDownloadTask(taskId).items.find((candidate) => candidate.id === itemId);
       if (!item) return true;
 
@@ -286,11 +328,15 @@ export class ReportService {
       });
 
       try {
+        const reportName = await this.resolveReportName(item.reportId);
+        signal.throwIfAborted();
         const output = await this.adapter.downloadReport({
           reportId: item.reportId,
-          reportName: await this.resolveReportName(item.reportId),
+          reportName,
           parameters: item.parameters,
           debugEnabled,
+          browserMode: taskOptions.browserMode,
+          signal,
           workerId,
           storageStatePath
         });
@@ -311,6 +357,10 @@ export class ReportService {
         });
         return false;
       } catch (error) {
+        if (signal.aborted) {
+          this.updateBatchItem(taskId, itemId, { status: "cancelled", nextRetryAt: undefined, errorCode: undefined, errorMessage: undefined });
+          return false;
+        }
         const flowError = error instanceof FlowError
           ? error
           : new FlowError(ErrorCodes.DOWNLOAD_FAILED, "Unexpected download failure.", error);
@@ -349,7 +399,7 @@ export class ReportService {
           maxRetries,
           nextRetryAt
         });
-        await sleep(retryDelaySeconds * 1000);
+        await sleep(retryDelaySeconds * 1000, signal);
         attempt += 1;
       }
     }
@@ -361,26 +411,38 @@ export class ReportService {
     taskId: string,
     reportId: ReportId,
     parameters: ReportParameters,
-    debugEnabled: boolean
+    debugEnabled: boolean,
+    browserMode: BrowserMode
   ): Promise<void> {
-    this.taskStore.update(taskId, { status: "running" });
-
+    const signal = this.controllers.get(taskId)!.signal;
+    this.taskStore.update(taskId, { status: signal.aborted ? "cancelling" : "running" });
+    let downloaded: { filePath: string; debugDir?: string } | undefined;
     try {
+      signal.throwIfAborted();
+      const reportName = await this.resolveReportName(reportId);
+      signal.throwIfAborted();
       const output = await this.adapter.downloadReport({
         reportId,
-        reportName: await this.resolveReportName(reportId),
+        reportName,
         parameters,
-        debugEnabled
+        debugEnabled,
+        signal,
+        browserMode
       });
+      downloaded = output;
       const parsed = await this.getParsedReport(output.filePath);
 
       this.taskStore.update(taskId, {
-        status: "completed",
+        status: signal.aborted ? "cancelled" : "completed",
         filePath: output.filePath,
         debugDir: output.debugDir,
         rowCount: parsed.rowCount
       });
     } catch (error) {
+      if (signal.aborted) {
+        this.taskStore.update(taskId, { status: "cancelled", filePath: downloaded?.filePath, debugDir: downloaded?.debugDir });
+        return;
+      }
       const flowError = error instanceof FlowError
         ? error
         : new FlowError(ErrorCodes.DOWNLOAD_FAILED, "Unexpected download failure.", error);
@@ -391,7 +453,7 @@ export class ReportService {
         errorCode: flowError.code,
         errorMessage: flowError.message
       });
-    }
+    } finally { this.controllers.delete(taskId); }
   }
 
   private validateParameters(
@@ -493,6 +555,7 @@ export class ReportService {
       completedCount: countItems(items, "completed"),
       failedCount: countItems(items, "failed"),
       skippedCount: countItems(items, "skipped"),
+      cancelledCount: countItems(items, "cancelled"),
       updatedAt: new Date().toISOString()
     };
     this.batchTasks.set(taskId, next);
@@ -516,8 +579,14 @@ function normalizeRetryDelaySeconds(value: unknown): number {
   return Math.min(Math.max(numeric, 1), 300);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort", finish); resolve(); };
+    timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+    if (signal?.aborted) finish();
+  });
 }
 
 function isRetryableDownloadError(error: FlowError): boolean {

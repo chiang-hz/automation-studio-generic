@@ -1,3 +1,4 @@
+import { localFilenameTimestamp } from "../domain/localTimestamp.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ReportAdapter, DownloadReportInput, DownloadReportOutput } from "./reportAdapter.ts";
@@ -21,6 +22,7 @@ export class MockReportAdapter implements ReportAdapter {
   }
 
   async downloadReport(input: DownloadReportInput): Promise<DownloadReportOutput> {
+    input.signal?.throwIfAborted();
     assertReportExists(input.reportId);
     if (input.reportId === "ebas-1103-income-statement") {
       throw new Error("Mock adapter does not support EBAS reports. Set REPORT_ADAPTER=ebas.");
@@ -30,6 +32,7 @@ export class MockReportAdapter implements ReportAdapter {
     const filePath = path.join(this.downloadDir, withTimestamp(input.reportName ?? input.reportId, ".csv"));
     const csv = this.createCsv(input);
 
+    input.signal?.throwIfAborted();
     await fs.writeFile(filePath, csv, "utf8");
     return { filePath };
   }
@@ -54,7 +57,7 @@ export class MockReportAdapter implements ReportAdapter {
 
 function withTimestamp(name: string, extension: string): string {
   const baseName = sanitizeFileName(path.basename(name, path.extname(name)));
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stamp = localFilenameTimestamp();
   return `${baseName}-${stamp}${extension}`;
 }
 

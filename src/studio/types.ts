@@ -20,6 +20,7 @@ export type StepKind =
   | "wait"
   | "assert"
   | "download"
+  | "savePagePdf"
   | "screenshot"
   | "script"
   | "condition"
@@ -60,6 +61,8 @@ export interface FrameRule {
 }
 
 export interface WaitRule {
+  /** Search all frames for this wait independently of the action scope. */
+  autoFrameSearch?: boolean;
   kind: "timeout" | "visible" | "hidden" | "attached" | "networkIdle" | "url";
   value?: string;
   timeoutMs?: number;
@@ -151,6 +154,27 @@ export interface WorkflowStep {
   downloadFileNameMode?: "original" | "custom";
   /** User-defined base filename; may contain {{parameter}} placeholders. */
   downloadFileName?: string;
+  /** Filename used when printing the current page to PDF. */
+  pdfFileName?: string;
+  pdfPageSize?: "A4" | "Letter";
+  pdfOrientation?: "portrait" | "landscape";
+  pdfPrintBackground?: boolean;
+  pdfMarginTopMm?: number;
+  pdfMarginRightMm?: number;
+  pdfMarginBottomMm?: number;
+  pdfMarginLeftMm?: number;
+  /** Print Chromium header and footer templates with the PDF. */
+  pdfDisplayHeaderFooter?: boolean;
+  /** HTML print header template; supports Chromium's date/title/url/pageNumber/totalPages classes. */
+  pdfHeaderTemplate?: string;
+  /** HTML print footer template; supports Chromium's date/title/url/pageNumber/totalPages classes. */
+  pdfFooterTemplate?: string;
+  /** Chromium PDF scale, from 0.1 to 2.0 (10% to 200%). */
+  pdfScale?: number;
+  /** When false, print only the current viewport instead of the full document. */
+  pdfFullPage?: boolean;
+  /** Append the computer's local YYYYMMDD_HHmmss timestamp to the file name. */
+  pdfUseLocalTime?: boolean;
 }
 
 export interface WorkflowParameter {
@@ -174,6 +198,8 @@ export interface BrowserSettings {
   connectionMode: BrowserConnectionMode;
   channel: BrowserChannel;
   headless: boolean;
+  /** Optional per-project plugin; effective only for managed browsers. */
+  stealth?: boolean;
   slowMoMs: number;
   defaultTimeoutMs: number;
   downloadTimeoutMs: number;
@@ -250,6 +276,9 @@ export interface WorkflowRun {
   projectName: string;
   status: RunStatus;
   mode: "full" | "single-step" | "from-step" | "batch";
+  /** Independent browser workstation used by a parallel batch. */
+  batchWorker?: number;
+  batchConcurrency?: number;
   parameters: Record<string, string | boolean>;
   startedAt: string;
   updatedAt: string;
@@ -283,13 +312,16 @@ export interface ExportSelection {
 
 export interface RecorderEvent {
   id: string;
-  type: "click" | "dblclick" | "fill" | "select" | "check" | "navigate" | "download" | "hover";
+  type: "click" | "dblclick" | "fill" | "select" | "check" | "navigate" | "download" | "hover" | "press" | "upload" | "assert";
   label: string;
   url: string;
   /** Resolved href/action of the element that was operated. */
   targetUrl?: string;
   value?: string;
   selector: SelectorRule[];
+  verification?: VerificationRule;
+  fileNames?: string[];
+  sensitive?: boolean;
   frameUrl?: string;
   /** Top-to-current frame URL/name chain captured by the recorder. */
   framePath?: string[];

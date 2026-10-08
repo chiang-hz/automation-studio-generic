@@ -50,7 +50,7 @@ echo EBAS compatibility workspace: http://127.0.0.1:%UI_PORT%/legacy/
 echo Keep this window open. Press Ctrl+C to stop.
 echo.
 
-start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 2; Start-Process 'http://127.0.0.1:%UI_PORT%'"
+rem The server opens the interface after startup, always opening it automatically.
 "%STUDIO_NODE%" --experimental-strip-types src\ui\server.ts
 if errorlevel 1 pause
 exit /b %errorlevel%

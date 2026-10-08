@@ -1,10 +1,11 @@
+import { prepareStudioChromium } from "./stealth.ts";
 import { browserLaunchMessage, DESKTOP_VIEWPORT, resolveStudioBrowser } from "./browser.ts";
 import { connectToCdpBrowser } from "./cdp.ts";
 import { createId } from "./store.ts";
 import { ensurePdfDownloadPreference, resolveProjectProfileDir } from "./profile.ts";
 import type { RecorderEvent, WorkflowProject } from "./types.ts";
 
-const RECORDER_DOCUMENT_VERSION = "1.1.6-recorder-framepath-normalization";
+const RECORDER_DOCUMENT_VERSION = "1.2.2-recorder-keyboard-upload-assertion";
 const RECORDER_WATCHDOG_MS = 2_500;
 const RECORDER_BRIDGE_POLL_MS = 500;
 const RECORDER_CONSOLE_PREFIX = "__AUTOMATION_STUDIO_RECORDER_BRIDGE__";
@@ -17,14 +18,17 @@ interface RecorderSession {
   events: RecorderEvent[];
   startedAt: string;
   browserSource: string;
+  stealth?: boolean;
   navigationError?: string;
   recordingEnabled: boolean;
+  assertionMode?: "visible" | "text" | "value";
   lastDiagnostic?: RecorderDiagnostic;
   externalBrowser: boolean;
   watchedPages: WeakSet<object>;
   healthTimer?: ReturnType<typeof setInterval>;
   bridgeTimer?: ReturnType<typeof setInterval>;
   healthCheckRunning: boolean;
+  healthCheckPromise?: Promise<void>;
   bridgeDrainRunning: boolean;
   frameHealth: RecorderFrameHealth;
   transportHealth: RecorderTransportHealth;
@@ -68,11 +72,13 @@ export interface ActiveRecorderBrowserSession {
   context: any;
   page: any;
   browserSource: string;
+  stealth?: boolean;
   release: () => void;
 }
 
 interface RecorderStatus {
   active: boolean;
+  assertionMode?: "visible" | "text" | "value";
   revision: number;
   startedAt?: string;
   events: RecorderEvent[];
@@ -98,6 +104,7 @@ export class RecorderManager {
     this.pendingStatuses.delete(project.id);
     const playwright = await this.loadPlaywright();
     const cdpMode = project.browser.connectionMode === "cdp";
+    const chromium = await prepareStudioChromium(playwright, project.browser);
     const profileDir = resolveProjectProfileDir(project.id);
     let context: any;
     let page: any;
@@ -112,6 +119,7 @@ export class RecorderManager {
       page = attached.page;
       browserSource = `既有 Chrome（CDP：${attached.endpoint}）`;
       externalBrowser = true;
+      if (project.browser.stealth === true) browserSource += "（CDP 不套用 Stealth）";
     } else {
       const browser = await resolveStudioBrowser(playwright, project.browser.channel);
       if (browser.available === false) throw new Error(browserLaunchMessage(project.browser.channel, browser, new Error("runtime unavailable")));
@@ -125,13 +133,13 @@ export class RecorderManager {
       try {
         if (project.browser.reuseProfile) {
           if (project.browser.downloadPdfInsteadOfPreview === true) await ensurePdfDownloadPreference(profileDir);
-          context = await playwright.chromium.launchPersistentContext(profileDir, {
+          context = await chromium.launchPersistentContext(profileDir, {
             ...launchOptions,
             acceptDownloads: true,
             viewport: DESKTOP_VIEWPORT
           });
         } else {
-          launchedBrowser = await playwright.chromium.launch(launchOptions);
+          launchedBrowser = await chromium.launch(launchOptions);
           context = await launchedBrowser.newContext({ acceptDownloads: true, viewport: DESKTOP_VIEWPORT });
         }
       } catch (error) {
@@ -139,7 +147,7 @@ export class RecorderManager {
         throw new Error(browserLaunchMessage(project.browser.channel, browser, error), { cause: error });
       }
       page = context.pages()[0] ?? await context.newPage();
-      browserSource = browser.source;
+      browserSource = browser.source + (project.browser.stealth === true ? "（Stealth 已啟用）" : "");
     }
 
     const session: RecorderSession = {
@@ -150,6 +158,7 @@ export class RecorderManager {
       events: [],
       startedAt: new Date().toISOString(),
       browserSource,
+      stealth: project.browser.stealth === true && !cdpMode,
       recordingEnabled: true,
       externalBrowser,
       watchedPages: new WeakSet<object>(),
@@ -243,6 +252,7 @@ export class RecorderManager {
       return {
         active: Boolean(currentRecorderPage(session)),
         revision: session.revision,
+        assertionMode: session.assertionMode,
         startedAt: session.startedAt,
         events: session.events,
         url: currentRecorderPage(session)?.url() ?? session.page.url(),
@@ -303,7 +313,7 @@ export class RecorderManager {
     const page = session ? currentRecorderPage(session) : undefined;
     if (!session || !page) return undefined;
     session.page = page;
-    return { context: session.context, page, browserSource: session.browserSource, release: () => undefined };
+    return { context: session.context, page, browserSource: session.browserSource, stealth: session.stealth, release: () => undefined };
   }
 
   async adoptNewestPage(projectId: string): Promise<ActiveRecorderBrowserSession | undefined> {
@@ -314,7 +324,7 @@ export class RecorderManager {
     if (!page) return undefined;
     session.page = page;
     await page.bringToFront?.().catch(() => undefined);
-    return { context: session.context, page, browserSource: session.browserSource, release: () => undefined };
+    return { context: session.context, page, browserSource: session.browserSource, stealth: session.stealth, release: () => undefined };
   }
 
   acquireActiveSession(projectId: string): ActiveRecorderBrowserSession | undefined {
@@ -328,6 +338,7 @@ export class RecorderManager {
       context: session.context,
       page,
       browserSource: session.browserSource,
+      stealth: session.stealth,
       release: () => {
         if (released) return;
         released = true;
@@ -350,13 +361,47 @@ export class RecorderManager {
     void this.refreshRecorderHealth(projectId, true);
   }
 
+  async flush(projectId: string): Promise<void> {
+    const session = this.sessions.get(projectId);
+    if (!session || !session.recordingEnabled) return;
+    for (const page of session.context.pages?.() ?? []) {
+      for (const frame of page.frames?.() ?? [page]) {
+        if (typeof frame.evaluate !== "function") continue;
+        const envelopes = await frame.evaluate(() => {
+          const win = window as any;
+          win.__automationStudioRecorderFlush?.();
+          let bridgeWindow = win;
+          try { if (win.top && win.top.location?.origin === location.origin) bridgeWindow = win.top; } catch { /* cross-origin owns its queue */ }
+          const queue = bridgeWindow.__automationStudioRecorderBridgeQueue;
+          bridgeWindow.__automationStudioRecorderBridgeQueue = [];
+          return Array.isArray(queue) ? queue : [];
+        }).catch(() => []);
+        for (const envelope of Array.isArray(envelopes) ? envelopes : []) {
+          if (envelope?.kind === "event" && envelope.payload) this.ingestRecorderEvent(projectId, envelope.payload, {}, "bridge");
+        }
+      }
+    }
+  }
+
+  async setAssertionMode(projectId: string, mode?: "visible" | "text" | "value"): Promise<void> {
+    const session = this.sessions.get(projectId);
+    if (!session || !session.recordingEnabled) throw new Error("請先啟動錄製。");
+    if (mode && !["visible", "text", "value"].includes(mode)) throw new Error("不支援的驗證種類。");
+    session.assertionMode = mode;
+    await this.refreshRecorderHealth(projectId, true);
+    this.notifySession(session);
+  }
+
   private async installRecorderInFrame(projectId: string, frame: any): Promise<boolean> {
     const session = this.sessions.get(projectId);
     if (!session || !frame || frame.isDetached?.()) return false;
     try {
       const healthy = await frame.evaluate((version: string) => (document as any).__automationStudioRecorderDocumentVersion === version, RECORDER_DOCUMENT_VERSION);
+      if (!healthy) await frame.evaluate(recorderScript);
+      await frame.evaluate((mode: string | undefined) => {
+        (window as any).__automationStudioAssertionMode = mode;
+      }, session.assertionMode);
       if (healthy) return true;
-      await frame.evaluate(recorderScript);
       const repaired = await frame.evaluate((version: string) => (document as any).__automationStudioRecorderDocumentVersion === version, RECORDER_DOCUMENT_VERSION).catch(() => false);
       if (repaired) {
         session.frameHealth.repairedFrames += 1;
@@ -369,6 +414,20 @@ export class RecorderManager {
   }
 
   private async refreshRecorderHealth(projectId: string, force: boolean): Promise<void> {
+    const session = this.sessions.get(projectId);
+    if (!session) return;
+    if (session.healthCheckPromise) {
+      await session.healthCheckPromise;
+      if (!force) return;
+    }
+    const task = this.performRecorderHealthRefresh(projectId, force);
+    session.healthCheckPromise = task;
+    try { await task; } finally {
+      if (session.healthCheckPromise === task) session.healthCheckPromise = undefined;
+    }
+  }
+
+  private async performRecorderHealthRefresh(projectId: string, force: boolean): Promise<void> {
     const session = this.sessions.get(projectId);
     if (!session || session.healthCheckRunning) return;
     if (!force && session.frameHealth.lastCheckedAt && Date.now() - Date.parse(session.frameHealth.lastCheckedAt) < RECORDER_WATCHDOG_MS - 100) return;
@@ -414,6 +473,12 @@ export class RecorderManager {
     const transportId = String(raw.transportId ?? "").trim();
     if (transportId && this.isDuplicateTransport(current, transportId)) return;
     const rawEvent = raw as any;
+    if (rawEvent.cancelled === true) {
+      current.assertionMode = undefined;
+      void this.refreshRecorderHealth(projectId, true);
+      this.notifySession(current);
+      return;
+    }
     const selector = normalizeRecorderSelectorCandidates(rawEvent);
     const {
       transportId: _transportId,
@@ -435,6 +500,10 @@ export class RecorderManager {
       ...(validFrameUrl(rawEvent.frameUrl) ? { frameUrl: String(rawEvent.frameUrl) } : {}),
       ...(normalizeFramePath(rawEvent.framePath).length ? { framePath: normalizeFramePath(rawEvent.framePath) } : {})
     } as Omit<RecorderEvent, "id" | "createdAt">;
+    if (enriched.type === "assert") {
+      current.assertionMode = undefined;
+      void this.refreshRecorderHealth(projectId, true);
+    }
     if (enriched.type === "dblclick") removeRecentMatchingClicks(current.events, enriched);
     current.events.push({ ...enriched, id: createId("record"), createdAt: new Date().toISOString() });
     this.noteTransportEvent(current, transport);
@@ -555,6 +624,7 @@ export class RecorderManager {
   async stop(projectId: string): Promise<void> {
     const session = this.sessions.get(projectId);
     if (!session) return;
+    await this.flush(projectId);
     if (session.healthTimer) clearInterval(session.healthTimer);
     if (session.bridgeTimer) clearInterval(session.bridgeTimer);
     this.notifySession(session);
@@ -611,10 +681,10 @@ async function importPlaywright(): Promise<typeof import("playwright")> {
   }
 }
 
-function recorderScript(): void {
+export function recorderScript(): void {
   const win = window as any;
   const doc = document as any;
-  const documentVersion = "1.1.6-recorder-framepath-normalization";
+  const documentVersion = "1.2.2-recorder-keyboard-upload-assertion";
   // A Window can survive document.open()/document.write() while its Document
   // and event listeners are replaced. Mark the Document, not just the Window,
   // so the host watchdog can safely re-install listeners into the new DOM.
@@ -694,6 +764,13 @@ function recorderScript(): void {
   const selectorsOf = (element: HTMLElement): Array<Record<string, unknown>> => {
     const result: Array<Record<string, unknown>> = [];
     const tag = element.tagName.toLowerCase();
+    // Hidden native file inputs must be attached rather than visible for setInputFiles.
+    if (element instanceof HTMLInputElement && element.type === "file") {
+      if (element.id) result.push({ strategy: "css", value: `#${CSS.escape(element.id)}` });
+      if (element.name) result.push({ strategy: "css", value: `input[type="file"]${cssAttr("name", element.name)}` });
+      if (!result.length) result.push({ strategy: "css", value: 'input[type="file"]' });
+      return result;
+    }
     const title = element.getAttribute("title")?.trim();
     const href = element instanceof HTMLAnchorElement ? element.getAttribute("href")?.trim() : undefined;
     const redirectTarget = googleRedirectTarget(href);
@@ -725,7 +802,14 @@ function recorderScript(): void {
     const text = element.innerText?.replace(/\s+/g, " ").trim();
     if (text && text.length <= 600) result.push({ strategy: "text", value: text, exact: true });
     if (!result.length) result.push({ strategy: "css", value: tag });
-    return result;
+    const unique: Array<Record<string, unknown>> = [];
+    const promoteCss = (value: string): void => {
+      try { if (document.querySelectorAll(value).length === 1) unique.push({ strategy: "css", value: `${value}:visible`, description: "錄製時唯一且穩定的元素識別" }); } catch { /* existing candidates remain */ }
+    };
+    if (testId) promoteCss(cssAttr("data-testid", testId));
+    if (element.id && !/^(?:ext-gen\d+|[a-f0-9]{12,}|ctl\d+_)/i.test(element.id)) promoteCss(`#${CSS.escape(element.id)}`);
+    if (elementName) promoteCss(`${tag}${cssAttr("name", elementName)}`);
+    return [...unique, ...result];
   };
   win.__automationStudioSelectorsOf = (element: HTMLElement) => selectorsOf(element);
   const diagnostic = (eventType: string, target: HTMLElement | null, result: "recorded" | "ignored", reason: string): void => {
@@ -772,7 +856,7 @@ function recorderScript(): void {
     }
     return null;
   };
-  const send = (type: string, element: HTMLElement, value?: string): void => {
+  const send = (type: string, element: HTMLElement, value?: string, extra: Record<string, unknown> = {}): void => {
     const input = element as HTMLInputElement;
     const safeValue = input.type === "password" ? "" : value;
     const anchor = element instanceof HTMLAnchorElement ? element : element.closest("a");
@@ -803,19 +887,62 @@ function recorderScript(): void {
         text: String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 600) || undefined
       },
       frameUrl: window.top === window ? undefined : location.href,
-      framePath: framePathOf()
+      framePath: framePathOf(),
+      sensitive: input.type === "password",
+      ...extra
     };
     emitBinding("__automationStudioRecord", payload);
     enqueueBridge("event", payload);
     diagnostic(type, element, "recorded", "已找到可操作元件並加入錄製事件");
   };
+  const recordedValues = new WeakMap<HTMLElement, string>();
+  const recordValue = (element: HTMLElement): void => {
+    const input = element as HTMLInputElement;
+    if (input.type === "hidden" || input.type === "file" || input.type === "password") return;
+    if (!(element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) return;
+    if (["button", "submit", "reset", "image"].includes(input.type)) return;
+    const value = element.isContentEditable ? element.textContent || "" : input.value;
+    const signature = [input.type, input.checked, value].join("|");
+    if (recordedValues.get(element) === signature) return;
+    recordedValues.set(element, signature);
+    if (element instanceof HTMLSelectElement) send("select", element, value);
+    else if (input.type === "checkbox" || input.type === "radio") send("check", element, String(input.checked));
+    else send("fill", element, value);
+  };
+  win.__automationStudioRecorderFlush = () => {
+    if (!win.__automationStudioAssertionMode && document.activeElement) recordValue(document.activeElement as HTMLElement);
+  };
   const recordedHoverTargets = new WeakSet<HTMLElement>();
   document.addEventListener("pointerover", (event) => {
+    if (win.__automationStudioAssertionMode) return;
     const element = (event.target as HTMLElement)?.closest('a[role="button"],button[aria-haspopup],[aria-haspopup="menu"],[aria-haspopup="true"]') as HTMLElement | null;
     if (!element || recordedHoverTargets.has(element)) return;
     recordedHoverTargets.add(element);
     send("hover", element);
   }, true);
+  let assertionClickUntil = 0;
+  const interceptAssertion = (event: Event, record: boolean): boolean => {
+    const mode = win.__automationStudioAssertionMode;
+    if (!mode && Date.now() > assertionClickUntil) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!record || !mode) return true;
+    const target = event.target as HTMLElement;
+    if (!target || !target.tagName) return true;
+    if (mode === "value" && (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) || ["password", "file"].includes((target as HTMLInputElement).type))) {
+      diagnostic("assert", target, "ignored", "值驗證請選取非密碼、非檔案的輸入欄位");
+      return true;
+    }
+    const expected = mode === "value" ? (target as HTMLInputElement).value : mode === "text" ? (target.textContent || "").trim() : undefined;
+    if (mode === "text" && !expected) {
+      diagnostic("assert", target, "ignored", "選取的元素沒有文字，請選取其他元素");
+      return true;
+    }
+    send("assert", target, undefined, { verification: { kind: mode, expected, timeoutMs: 10000 } });
+    win.__automationStudioAssertionMode = undefined;
+    assertionClickUntil = Date.now() + 600;
+    return true;
+  };
   const recordPointerAction = (type: "click" | "dblclick", event: Event): void => {
     const target = event.target as HTMLElement | null;
     const formControl = target?.closest?.("input,select,textarea") as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
@@ -852,7 +979,10 @@ function recorderScript(): void {
     return `${location.href}|${labelOf(element)}|${String(selector?.strategy ?? "")}|${String(selector?.value ?? "")}`;
   };
   document.addEventListener("pointerdown", (event) => {
+    if (interceptAssertion(event, false)) return;
     if ((event as PointerEvent).button !== 0) return;
+    const focused = document.activeElement as HTMLElement | null;
+    if (focused) recordValue(focused);
     const target = event.target as HTMLElement | null;
     const element = findActionableElement(target);
     if (!element) return;
@@ -864,6 +994,7 @@ function recorderScript(): void {
     recordPointerAction("click", event);
   }, true);
   document.addEventListener("click", (event) => {
+    if (interceptAssertion(event, true)) return;
     // Do not delay this call. Legacy intranet pages can navigate synchronously
     // during the click, which destroys timers belonging to the old document.
     const element = findActionableElement(event.target as HTMLElement | null);
@@ -871,16 +1002,44 @@ function recorderScript(): void {
     if (signature && signature === lastPointerDownSignature && Date.now() - lastPointerDownAt < 1_200) return;
     recordPointerAction("click", event);
   }, true);
+  for (const type of ["mousedown", "mouseup", "pointerup"]) {
+    document.addEventListener(type, (event) => { interceptAssertion(event, false); }, true);
+  }
   document.addEventListener("dblclick", (event) => {
+    if (interceptAssertion(event, false)) return;
     recordPointerAction("dblclick", event);
   }, true);
   document.addEventListener("change", (event) => {
     const element = event.target as HTMLInputElement | HTMLSelectElement;
     if (!element) return;
-    if (element instanceof HTMLInputElement && element.type === "hidden") return;
-    if (element instanceof HTMLSelectElement) send("select", element, element.value);
-    else if (element.type === "checkbox" || element.type === "radio") send("check", element, String(element.checked));
-    else send("fill", element, element.value);
+    if (win.__automationStudioAssertionMode) return;
+    if (element instanceof HTMLInputElement && element.type === "file") {
+      const fileNames = Array.from(element.files || []).map((file) => file.name);
+      if (fileNames.length) send("upload", element, fileNames.join("\n"), { fileNames });
+    } else if (element.type === "password") send("fill", element, "");
+    else recordValue(element);
+  }, true);
+  document.addEventListener("focusout", (event) => {
+    if (!win.__automationStudioAssertionMode) recordValue(event.target as HTMLElement);
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    const keyboard = event as KeyboardEvent;
+    if (win.__automationStudioAssertionMode) {
+      if (keyboard.key === "Escape") { win.__automationStudioAssertionMode = undefined; send("assert", document.body, undefined, { verification: undefined, cancelled: true }); }
+      return;
+    }
+    if (keyboard.isComposing || keyboard.repeat || keyboard.key === "Process" || keyboard.key === "Dead") return;
+    const target = event.target as HTMLElement;
+    if (!target?.tagName || (target as HTMLInputElement).type === "password") return;
+    const modifier = keyboard.ctrlKey || keyboard.metaKey || keyboard.altKey;
+    const supported = ["Enter", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete", " "];
+    if (!modifier && !supported.includes(keyboard.key)) return;
+    if (["Control", "Meta", "Alt", "Shift", "CapsLock", "NumLock", "ScrollLock"].includes(keyboard.key)) return;
+    // Commit text before Enter/Tab or shortcut can submit, move focus or navigate.
+    recordValue(target);
+    const key = keyboard.key === " " ? "Space" : keyboard.key.length === 1 && modifier ? keyboard.key.toLowerCase() : keyboard.key;
+    const combo = [keyboard.ctrlKey ? "Control" : "", keyboard.metaKey ? "Meta" : "", keyboard.altKey ? "Alt" : "", keyboard.shiftKey ? "Shift" : "", key].filter(Boolean).join("+");
+    send("press", target, combo);
   }, true);
 }
 

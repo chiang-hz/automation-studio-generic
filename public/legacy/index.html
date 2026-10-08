@@ -90,6 +90,8 @@
                 <div class="advanced-settings-body">
                   <div class="advanced-group">
                     <h4>執行控制</h4>
+                    <label class="field compact-field"><span>瀏覽器模式</span><select id="browserModeSelect"><option value="headed" selected>顯示瀏覽器視窗（建議）</option><option value="headless">無頭模式</option></select><small class="help-text">適用單筆與批次下載；工作站 A/B 人工登入固定顯示視窗，Session 健康檢查固定無頭。</small></label>
+                    <p id="browserModeWarning" class="help-text" role="status" hidden>Debug + 無頭模式不會顯示瀏覽器視窗，仍會保存除錯資料；若需觀察操作，請改選顯示瀏覽器視窗。系統將沿用您的選擇。</p>
                     <label class="field compact-field">
                       <span>平行執行數</span>
                       <select id="parallelismSelect">

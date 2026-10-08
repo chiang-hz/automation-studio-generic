@@ -57,8 +57,9 @@ export function recordedEventsToSteps(events: RecorderEvent[]): WorkflowStep[] {
   return meaningfulEvents.map((event, index) => {
     const eventKind = recordedEventKind(event);
     const selectors = recordedSelectorsForStep(event);
+    const currentCss = selectors.find((rule) => rule.strategy === "css");
     const nextSelectors = sanitizeRecordedSelectors(meaningfulEvents[index + 1]?.selector ?? []);
-    const nextSelector = nextSelectors.find((rule) => rule.strategy === "css");
+    const nextSelector = meaningfulEvents[index + 1]?.type === "upload" ? undefined : nextSelectors.find((rule) => rule.strategy === "css");
     const base: WorkflowStep = {
       id: createId("step"),
       name: `${index + 1}. ${event.label}`,
@@ -68,17 +69,29 @@ export function recordedEventsToSteps(events: RecorderEvent[]): WorkflowStep[] {
       frame: recordedEventFrameUrl(event) ? recordedFrameRule(recordedEventFrameUrl(event)!) : undefined,
       autoFrameSearch: Boolean(recordedEventFrameUrl(event)),
       retryCount: 1,
+      waitBefore: currentCss && !["navigate", "upload", "assert"].includes(eventKind)
+        ? { kind: "visible", value: currentCss.value, timeoutMs: 10000 } : undefined,
       waitAfter: eventKind === "hover" && nextSelector
-        ? { kind: "visible", value: nextSelector.value, timeoutMs: 5_000 }
+        ? { kind: "visible", value: nextSelector.value, timeoutMs: 5_000, ...(recordedEventFrameUrl(meaningfulEvents[index + 1]) ? { autoFrameSearch: true } : {}) }
         // A fixed 500 ms delay is unreliable for a search result or article
         // navigation. The next recorded visible selector is stronger evidence
         // that the click has completed and avoids unnecessary retries.
         : (eventKind === "click" || eventKind === "dblclick") && nextSelector
-          ? { kind: "visible", value: nextSelector.value, timeoutMs: 10_000 }
+          ? { kind: "visible", value: nextSelector.value, timeoutMs: 10_000, ...(recordedEventFrameUrl(meaningfulEvents[index + 1]) ? { autoFrameSearch: true } : {}) }
           : (eventKind === "click" || eventKind === "dblclick") ? { kind: "timeout", timeoutMs: 750 } : undefined
     };
     if (event.type === "navigate") base.url = event.url;
-    if (["fill", "select"].includes(event.type)) base.value = event.value ?? "";
+    if (["fill", "select", "press", "upload"].includes(event.type)) base.value = event.value ?? "";
+    if (event.type === "assert") base.verification = event.verification;
+    if (event.type === "upload") {
+      base.enabled = false;
+      base.description = `已選取：${(event.fileNames ?? []).join("、")}。網頁無法取得完整本機路徑；請將值改為完整路徑（多個檔案一行一個），再啟用此步驟。`;
+    }
+    if (event.sensitive) {
+      base.enabled = false;
+      base.value = "";
+      base.description = "密碼值未錄製。請設定機敏參數或人工登入，再啟用此步驟。";
+    }
     if (event.type === "check") base.kind = event.value === "false" ? "uncheck" : "check";
     return base;
   });
