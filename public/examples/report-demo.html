@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>範例報表中心 · Automation Studio</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f6fb;color:#18324a;font:17px/1.6 "Microsoft JhengHei",sans-serif}main{max-width:1100px;margin:55px auto;padding:0 28px}.eyebrow{color:#25756e;letter-spacing:2px;font-size:13px;font-weight:700}h1{font-size:38px;margin:10px 0}p{color:#62778a}.card{background:white;border:1px solid #dae4ed;border-radius:18px;padding:30px;margin:24px 0;box-shadow:0 8px 30px #17324b08}form{display:flex;gap:24px;align-items:end;flex-wrap:wrap}label{display:grid;gap:8px;font-weight:700}input,select,button,a.download{font:inherit;border-radius:8px;padding:10px 16px}input,select{border:1px solid #c4d3df;min-width:160px}button,a.download{border:0;background:#16776e;color:white;cursor:pointer;text-decoration:none;display:inline-block}button:focus-visible,a:focus-visible{outline:3px solid #f0ae38;outline-offset:4px}a[aria-disabled=true]{background:#8698a6;pointer-events:none}table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;padding:14px;border-bottom:1px solid #e4ebf1}th{background:#f5f8fb}td:last-child,th:last-child{text-align:right}.status{color:#12675f;font-weight:700}.note{font-size:14px}.tag{padding:5px 10px;border-radius:20px;background:#e2f2ec;color:#12675f;font-size:13px}footer{font-size:14px;color:#6b7c8f}
+</style>
+<main>
+<div class="eyebrow">AUTOMATION STUDIO / PRACTICE LAB</div>
+<h1>範例報表中心</h1>
+<p>練習選擇年度、輸入關鍵字、驗證查詢結果與下載 CSV。所有金額均為虛構練習資料。</p>
+<section class="card"><form id="query-form">
+<label for="report-year">年度<select id="report-year"><option value="115">115</option><option value="114">114</option></select></label>
+<label for="report-keyword">報表關鍵字<input id="report-keyword" placeholder="例如：收入" autocomplete="off"></label>
+<button type="submit">查詢報表</button>
+</form></section>
+<section class="card" aria-label="查詢結果"><span class="tag">本機練習 · 免登入</span>
+<p id="query-status" class="status" role="status" aria-live="polite">請設定條件後按「查詢報表」。</p>
+<table><thead><tr><th>年度</th><th>報表名稱</th><th>單位</th><th>金額（元）</th></tr></thead><tbody id="report-rows"></tbody></table>
+<a id="download-csv" class="download" aria-disabled="true">下載 CSV</a>
+<p class="note">CSV 使用 UTF-8 BOM，可直接以 Excel 開啟。查無資料時停用下載，避免產生空報表。</p>
+</section><footer>練習流程：開啟網址 → 設定年度 → 輸入關鍵字 → 查詢 → 驗證 → 擷取摘要 → 下載。</footer>
+</main>
+<script>
+const records=[{year:'115',name:'收入明細表',unit:'示範基金',amount:1250000},{year:'115',name:'其他收入明細表',unit:'示範基金',amount:250000},{year:'115',name:'成本彙總表',unit:'示範基金',amount:800000},{year:'114',name:'收入明細表',unit:'示範基金',amount:1100000},{year:'114',name:'其他收入明細表',unit:'示範基金',amount:180000},{year:'114',name:'成本彙總表',unit:'示範基金',amount:720000}];
+let downloadUrl;
+document.querySelector('#query-form').addEventListener('submit',event=>{
+ event.preventDefault();
+ const year=document.querySelector('#report-year').value;
+ const keyword=document.querySelector('#report-keyword').value.trim();
+ const matches=records.filter(record=>record.year===year && record.name.includes(keyword));
+ const body=document.querySelector('#report-rows');body.replaceChildren();
+ for(const record of matches){const row=document.createElement('tr');for(const value of [record.year,record.name,record.unit,record.amount.toLocaleString('en-US')]){const cell=document.createElement('td');cell.textContent=value;row.append(cell)}body.append(row)}
+ document.querySelector('#query-status').textContent=matches.length?`查詢完成：${year} 年度，共 ${matches.length} 筆報表`:`查無資料：${year} 年度，請調整關鍵字`;
+ const link=document.querySelector('#download-csv');
+ if(downloadUrl){URL.revokeObjectURL(downloadUrl);downloadUrl=undefined;}
+ link.setAttribute('aria-disabled',matches.length?'false':'true');
+ if(!matches.length){link.removeAttribute('href');link.removeAttribute('download');return;}
+ const escapeCsv=value=>'"'+String(value).replaceAll('"','""')+'"';
+ const csv='\uFEFF'+[['年度','報表名稱','單位','金額'],...matches.map(record=>[record.year,record.name,record.unit,record.amount])].map(row=>row.map(escapeCsv).join(',')).join('\r\n')+'\r\n';
+ downloadUrl=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+ link.href=downloadUrl;link.download=`demo-reports-${year}.csv`;
+});
+</script>
+</html>
