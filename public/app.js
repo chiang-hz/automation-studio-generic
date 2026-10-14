@@ -102,7 +102,9 @@ async function initialize() {
     renderSettings();
     restoreAIWorkflowSession();
     renderAIWorkflowAssistant();
+    window.studioStartup?.complete("data");
   } catch (error) {
+    if (document.documentElement.dataset.studioBoot !== "ready") window.studioStartup?.fail("工作空間資料初始化失敗，請確認服務仍在執行後重新整理。");
     markRuntime({ ok: false, runtime: { playwright: false, message: error.message } });
     toast(error.message, true);
   }
@@ -3039,7 +3041,7 @@ function renderAISettingsBadge() { const aiEnabled = $("#aiEnabled")?.checked ==
 
 async function saveSettings(options = {}) {
   const settings = { theme: $("#themeSetting").value, retentionDays: Number($("#retentionDays").value) || 30, runHistoryRetentionDays: Number($("#runHistoryRetentionDays").value) || 30, defaultDownloadDir: $("#downloadDirectory").value.trim() || "./downloads", debugRetention: $("#debugRetention").value, issueReportEmail: $("#issueReportEmail").value.trim(), ai: readAISettingsFromForm() };
-  try { const response = await api("/api/studio/settings", { method: "PUT", body: JSON.stringify(settings) }); state.settings = response.settings; applyTheme(settings.theme); renderAISettings(); if (!options.quiet) toast("系統設定已儲存"); return true; } catch (error) { toast(error.message, true); return false; }
+  try { const response = await api("/api/studio/settings", { method: "PUT", body: JSON.stringify(settings) }); state.settings = response.settings; applyTheme(response.settings.theme ?? "system"); renderAISettings(); if (!options.quiet) toast("系統設定已儲存"); return true; } catch (error) { toast(error.message, true); return false; }
 }
 
 async function testActiveAIProvider() { const id = $("#activeAIProvider").value; if (!id) return toast("沒有可測試的 AI Provider。", true); await testAIProvider(id); }
@@ -3334,7 +3336,7 @@ async function copyAIWorkflowDiagnostic() {
   const e = state.aiWorkflowExploration;
   const provider = activeAIProviderSummary();
   const lines = [
-    `Automation Studio: 2.0.2`,
+    `Automation Studio: 2.0.6`,
     `時間: ${new Date().toISOString()}`,
     `目前階段: ${m?.stageLabel || "—"}`,
     `狀態: ${m?.status || "idle"}`,
@@ -3921,7 +3923,7 @@ function buildIssueReportText() {
     "",
     `問題類別：${category}`,
     `影響程度：${severity}`,
-    `系統版本：V2.0.2`,
+    `系統版本：V2.0.6`,
     `目前專案：${projectName}`,
     `專案 ID：${projectId}`,
     `瀏覽器模式：${browserMode}`,
@@ -3948,7 +3950,7 @@ function buildIssueReportText() {
 function issueReportSubject() {
   const custom = $("#reportSubject")?.value.trim();
   const category = $("#reportCategory")?.value ?? "其他";
-  return custom || `[Automation Studio V2.0.2][${category}] 問題回報`;
+  return custom || `[Automation Studio V2.0.6][${category}] 問題回報`;
 }
 
 async function copyIssueReport() {
@@ -3993,6 +3995,7 @@ function clearIssueReport() {
 function applyTheme(theme) {
   const resolved = theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
   document.documentElement.dataset.theme = resolved;
+  try { localStorage.setItem("studio-startup-theme", theme); localStorage.removeItem("studio-ui-theme"); } catch { /* Theme still applies if browser storage is unavailable. */ }
 }
 
 function renderRawJson() {

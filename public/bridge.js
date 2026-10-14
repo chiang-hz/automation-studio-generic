@@ -78,7 +78,7 @@
       for(const [id,key] of Object.entries(fields)){const input=document.getElementById(id);if(input)input.value=String(settings?.[key]??'');}
     },
     readAISettingsDraft(){return readAISettingsFromForm();},
-    adoptSettings(settings){state.settings=structuredClone(settings??{});const theme=state.settings.theme??'system';localStorage.setItem('studio-ui-theme',theme);applyTheme(theme);renderSettings();publish();},
+    adoptSettings(settings){state.settings=structuredClone(settings??{});const theme=state.settings.theme??'system';applyTheme(theme);renderSettings();publish();},
     prepareIssueReport(values){
       const fields={reportSubject:'subject',reportCategory:'category',reportSeverity:'severity',reportDescription:'description',reportSteps:'steps',reportExpected:'expected',reportActual:'actual',reportContact:'contact'};
       for(const [id,key] of Object.entries(fields)){const input=document.getElementById(id);if(input)input.value=String(values?.[key]??'');}
@@ -115,7 +115,7 @@
     openDownloadFolder(){const button=document.querySelector('#downloadResults [data-download-action="open-folder"]');button?.click();},
     async invoke(id){const button=document.getElementById(id);if(!button||button.disabled||button.hidden)return;const actions={acceptAndApplyAIWorkflowRevisionButton:acceptAndApplyAIWorkflowRevision,acceptAIWorkflowRevisionButton:acceptAIWorkflowRevision,discardAIWorkflowRevisionButton:discardAIWorkflowRevision,undoAIWorkflowRevisionButton:undoAIWorkflowRevision,applyAIWorkflowProjectButton:applyAIWorkflowToCurrentProject,createAIWorkflowProjectButton:createAIWorkflowProject};try{await actions[id]?.();}finally{publish();}},
     selected,
-    setTheme(theme){applyTheme(theme);localStorage.setItem('studio-ui-theme',theme);const setting=document.querySelector('#themeSetting');if(setting)setting.value=theme;},
+    setTheme(theme){applyTheme(theme);const setting=document.querySelector('#themeSetting');if(setting)setting.value=theme;publish();},
     debugText(tab){return state.currentRun?buildRunDebugText(state.currentRun,state.currentRunDebug,tab):'尚未執行。';}
   };
   document.addEventListener('DOMContentLoaded',()=>{publish();});

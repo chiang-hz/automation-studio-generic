@@ -1,4 +1,4 @@
-import React, { useEffect, useState, Component, type ReactNode } from 'react';
+import React, { useEffect, useLayoutEffect, useState, Component, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -6,11 +6,12 @@ import {
   Search, Sun, Moon, ChevronLeft, ChevronRight, FolderKanban, LayoutDashboard, Globe,
   Workflow, Database, FlaskConical, Table2, History, Package, Settings,
   HelpCircle, MessageCircle, Sparkles, Wrench, FileJson2, FolderPlus, FileUp,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen, X
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
 import { runtimeSdk } from './sdk/runtimeSdk';
+import { studioApi, type StudioSettings } from './sdk/restClient';
 import { useStudio } from './store';
 import { Designer, PropertySheet } from './components/Designer';
 import { BatchGrid } from './components/BatchGrid';
@@ -67,7 +68,7 @@ const helpHost = host('modern-help', document.getElementById('helpView')!);
 const reportHost = host('modern-report', document.getElementById('reportView')!);
 const developerHost = host('modern-developer', document.getElementById('developerView')!);
 const helpSourceView = document.getElementById('helpView')!;
-const globalHost = host('modern-global-controls', document.querySelector('.topbar')!);
+const globalHost = host('modern-global-controls', document.querySelector('.topbar')!, document.getElementById('workspaceTopbarActions'));
 const sidebarToggleHost = host('modern-sidebar-toggle', document.body);
 const projectSwitcherIconHost = host('modern-project-switcher-icon', document.querySelector('.project-select-control')!, null, 'span');
 const newProjectIconHost = document.querySelector<HTMLElement>('#newProjectButton .sidebar-action-icon')!;
@@ -75,6 +76,7 @@ const importProjectIconHost = document.querySelector<HTMLElement>('#importProjec
 newProjectIconHost.replaceChildren();
 importProjectIconHost.replaceChildren();
 const paletteControlsHost = host('modern-palette-controls', document.querySelector('.palette-pane .pane-heading')!);
+const paletteSearchHost = host('modern-palette-search', document.querySelector('.palette-pane')!, document.getElementById('stepPalette'));
 const developerSummary = document.querySelector('.developer-menu > summary')!;
 const developerSummaryHost = host('modern-developer-summary-icon', developerSummary);
 developerSummaryHost.classList.add('modern-developer-summary-icon');
@@ -94,20 +96,21 @@ function isTypingSurface(target: EventTarget | null) {
 
 function Studio() {
   const { snapshot, setCommand } = useStudio();
+  const [themeSaving, setThemeSaving] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('studio-sidebar-collapsed') === 'true');
   const [editors, setEditors] = useState<{ target: HTMLTextAreaElement | HTMLInputElement; mount: HTMLElement; language: string }[]>([]);
   const [paletteCollapsed, setPaletteCollapsed] = useState(() => localStorage.getItem('studio-palette-collapsed-v2') !== 'false');
   const [palettePeeking,setPalettePeeking]=useState(false);
+  const [paletteFilter, setPaletteFilter] = useState('');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.classList.add('modern-active');
     document.documentElement.classList.add('react-dashboard-active');
     document.documentElement.classList.add('react-parameters-active');
     document.documentElement.classList.add('react-publish-active');
     document.documentElement.classList.add('react-workstation-active', 'react-settings-active', 'react-report-active', 'react-developer-active');
-    const desired = localStorage.getItem('studio-ui-theme');
-    if (desired === 'light' || desired === 'dark') runtimeSdk.setTheme(desired);
     useStudio.getState().refresh();
+    window.studioStartup?.complete('ui');
   }, []);
 
   useEffect(() => {
@@ -132,6 +135,22 @@ function Studio() {
   }, [paletteCollapsed]);
 
   useEffect(()=>{document.querySelector('.palette-pane')?.classList.toggle('is-peeking',palettePeeking);},[palettePeeking]);
+
+  useEffect(() => {
+    const query = paletteFilter.trim().toLowerCase();
+    const buttons = document.querySelectorAll<HTMLButtonElement>('#stepPalette button[data-kind]');
+    buttons.forEach(btn => {
+      const text = `${btn.textContent ?? ''} ${btn.dataset.kind ?? ''}`.toLowerCase();
+      btn.hidden = Boolean(query && !text.includes(query));
+    });
+    const groups = document.querySelectorAll<HTMLElement>('#stepPalette .palette-group-title');
+    groups.forEach(group => {
+      const groupName = group.dataset.paletteGroup;
+      if (!groupName) return;
+      const groupButtons = document.querySelectorAll<HTMLButtonElement>(`#stepPalette button[data-group="${groupName}"]`);
+      group.hidden = Boolean(query && groupButtons.length > 0 && [...groupButtons].every(b => b.hidden));
+    });
+  }, [paletteFilter]);
 
   useEffect(() => {
     const selector = snapshot.view === 'designer' ? '#stepSelectors,#regexPattern'
@@ -213,18 +232,42 @@ function Studio() {
     if (snapshot.view !== 'designer') useStudio.getState().setSheet(false);
   }, [snapshot.view]);
 
+  const toggleTheme = async () => {
+    if (themeSaving) return;
+    const original = String(snapshot.state.settings?.theme ?? 'system');
+    const next = snapshot.theme === 'dark' ? 'light' : 'dark';
+    setThemeSaving(true);
+    runtimeSdk.setTheme(next);
+    try {
+      const response = await studioApi.updateSettings({ ...(snapshot.state.settings as StudioSettings), theme: next });
+      runtimeSdk.adoptSettings(response.settings as Record<string, unknown>);
+    } catch (error) {
+      runtimeSdk.setTheme(original);
+      runtimeSdk.toast(`無法儲存介面配色：${error instanceof Error ? error.message : String(error)}`, true);
+    } finally {
+      setThemeSaving(false);
+    }
+  };
+
   return <>
     {createPortal(
       <div className="global-controls">
         <Button id="command-open" onClick={() => setCommand(true)} className="command-launch" aria-label="搜尋與指令，Ctrl 或 Command 加 K">
-          <Search size={16}/><span>搜尋與指令</span><kbd>Ctrl K</kbd>
+          <Search size={15}/><span>搜尋與指令</span><kbd>Ctrl K</kbd>
         </Button>
-        <Button size="icon" variant="ghost" title="切換深淺色" aria-label="切換深淺色" onClick={() => runtimeSdk.setTheme(snapshot.theme === 'dark' ? 'light' : 'dark')}>
-          {snapshot.theme === 'dark' ? <Sun size={17}/> : <Moon size={17}/>}
+        <Button size="icon" variant="ghost" title="切換深淺色" aria-label="切換深淺色" disabled={themeSaving} onClick={() => { void toggleTheme(); }}>
+          {snapshot.theme === 'dark' ? <Sun size={16}/> : <Moon size={16}/>}
         </Button>
       </div>, globalHost
     )}
     {createPortal(<Button size="icon" variant="ghost" className="palette-collapse-toggle" aria-controls="stepPalette" aria-expanded={!paletteCollapsed||palettePeeking} aria-label={paletteCollapsed ? '展開動作元件' : '收合動作元件'} title={paletteCollapsed ? '停留 0.8 秒顯示元件；點擊固定展開' : '收合動作元件'} onClick={event => { setPalettePeeking(false); document.querySelector('.palette-pane')?.classList.toggle('hover-suppressed', !paletteCollapsed); event.currentTarget.blur(); setPaletteCollapsed(value => !value); }}>{paletteCollapsed ? <PanelLeftOpen size={16}/> : <PanelLeftClose size={16}/>}</Button>, paletteControlsHost)}
+    {createPortal(
+      <div className="palette-search-box">
+        <Search size={13}/>
+        <input value={paletteFilter} onChange={e => setPaletteFilter(e.target.value)} placeholder="篩選動作元件…" aria-label="篩選動作元件"/>
+        {paletteFilter && <button type="button" aria-label="清除動作元件篩選" onClick={() => setPaletteFilter('')}><X size={12}/></button>}
+      </div>, paletteSearchHost
+    )}
     {createPortal(<FolderPlus size={17} aria-hidden="true"/>, newProjectIconHost)}
     {createPortal(<FileUp size={17} aria-hidden="true"/>, importProjectIconHost)}
     {createPortal(<Wrench size={17} strokeWidth={1.7} aria-hidden="true"/>, developerSummaryHost)}
@@ -281,6 +324,7 @@ class UIErrorBoundary extends Component<{ children: ReactNode }, { failed: boole
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: Error) {
     console.error('Modern UI failed to render.', error);
+    window.studioStartup?.fail('介面無法正常顯示，請重新整理後再試。');
   }
   render() {
     return this.state.failed

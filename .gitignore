@@ -1,5 +1,7 @@
-# Dependencies
+# Dependencies and Build Artifacts
 node_modules/
+dist/
+frontend/dist/
 
 # Runtime and Authentication
 .auth/

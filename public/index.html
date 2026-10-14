@@ -1,17 +1,116 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" class="modern-active" data-studio-boot="loading">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>網站自動化流程設計平台 · Automation Studio</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <style id="studio-startup-style">
+      html:not([data-studio-boot="ready"]) .app-shell,
+      html:not([data-studio-boot="ready"]) #studio-react-root,
+      html:not([data-studio-boot="ready"]) [id^="modern-"] { visibility: hidden !important; pointer-events: none !important; }
+      #studio-startup { position: fixed; inset: 0; z-index: 20000; display: grid; place-items: center; padding: 24px; background: #f7f8fa; color: #1e293b; font: 16px/1.6 "Microsoft JhengHei", system-ui, sans-serif; }
+      html[data-theme="dark"] #studio-startup { background: #0d1117; color: #e2e8f0; }
+      #studio-startup > div { width: min(100%, 420px); text-align: center; }
+      #studio-startup h1 { margin: 0 0 10px; font-size: 22px; font-weight: 600; }
+      #studio-startup p { margin: 0; opacity: .8; }
+      #studio-startup button { margin-top: 18px; padding: 9px 18px; border: 1px solid #64748b; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+      #studio-startup [hidden], html[data-studio-boot="ready"] #studio-startup { display: none !important; }
+    </style>
+    <script id="studio-startup-script">
+/* Runs in <head>, before the app DOM or modern assets can paint. */
+(() => {
+  const root = document.documentElement;
+  const completed = new Set();
+  let failed = false;
+  let revealing = false;
+  let message = '';
+  let slow = false;
+
+  try {
+    const preference = localStorage.getItem('studio-startup-theme') || 'system';
+    root.dataset.theme = preference === 'light' || preference === 'dark'
+      ? preference : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    root.dataset.theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function updateMessage() {
+    const title = document.getElementById('studio-startup-title');
+    const description = document.getElementById('studio-startup-description');
+    const reload = document.getElementById('studio-startup-reload');
+    const screen = document.getElementById('studio-startup');
+    if (title) title.textContent = failed ? '介面載入失敗' : slow ? '介面仍在載入' : '正在載入介面';
+    if (description) description.textContent = message || '正在準備工作空間，請稍候。';
+    if (reload) reload.hidden = !failed && !slow;
+    if (screen) screen.setAttribute('role', failed ? 'alert' : 'status');
+  }
+
+  function fail(text) {
+    failed = true;
+    window.clearTimeout(timeout);
+    message = text || '請重新整理後再試。';
+    root.dataset.studioBoot = 'failed';
+    const shell = document.querySelector('.app-shell');
+    if (shell) { shell.inert = true; shell.setAttribute('aria-busy', 'true'); }
+    updateMessage();
+  }
+
+  function complete(part) {
+    if (failed || root.dataset.studioBoot === 'ready' || !['ui', 'data', 'styles'].includes(part)) return;
+    completed.add(part);
+    // A cached stylesheet may finish before React calls complete('ui').
+    if (document.getElementById('studio-modern-styles')?.sheet) completed.add('styles');
+    if (revealing || completed.size !== 3) return;
+    revealing = true;
+    // Allow store updates and portal layout effects to commit before revealing.
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (failed) return;
+      window.clearTimeout(timeout);
+      const shell = document.querySelector('.app-shell');
+      if (shell) { shell.inert = false; shell.setAttribute('aria-busy', 'false'); }
+      root.dataset.studioBoot = 'ready';
+    }));
+  }
+
+  const timeout = window.setTimeout(() => {
+    slow = true;
+    message = '載入時間較長，請確認服務仍在執行。可繼續等候，或重新整理後再試。';
+    updateMessage();
+    // Slow assets may still finish; this is not a permanent failure.
+  }, 30000);
+  window.studioStartup = { complete, fail };
+  window.addEventListener('load', event => {
+    if (event.target?.id === 'studio-modern-styles') complete('styles');
+  }, true);
+  window.addEventListener('error', event => {
+    const target = event.target;
+    if (target?.id === 'studio-base-styles' || target?.id === 'studio-modern-styles' || target?.id === 'studio-modern-script' ||
+        target?.tagName === 'SCRIPT' && /\/(?:app|bridge)\.js(?:\?|$)/.test(target.src || '')) {
+      fail('介面必要檔案無法載入。請重新整理；若仍失敗，確認程式檔案完整。');
+    } else if (root.dataset.studioBoot !== 'ready' && event.message) {
+      fail('介面初始化失敗，請重新整理後再試。');
+    }
+  }, true);
+  window.addEventListener('unhandledrejection', () => {
+    if (root.dataset.studioBoot !== 'ready') fail('介面初始化失敗，請重新整理後再試。');
+  });
+  document.addEventListener('DOMContentLoaded', updateMessage);
+  document.addEventListener('click', event => {
+    if (event.target?.id === 'studio-startup-reload') window.location.reload();
+  });
+})();
+    </script>
+    <link id="studio-base-styles" rel="stylesheet" href="./styles.css" />
   <!-- MODERN START -->
-    <link rel="stylesheet" href="/modern/assets/studio.css?v=2.0.2" />
+    <link id="studio-modern-styles" rel="stylesheet" href="/modern/assets/studio.css?v=2.0.6" />
     <!-- MODERN END -->
   </head>
   <body>
-    <div class="app-shell">
+    <section id="studio-startup" role="status" aria-live="polite" aria-atomic="true">
+      <div><h1 id="studio-startup-title">正在載入介面</h1><p id="studio-startup-description">正在準備工作空間，請稍候。</p><button id="studio-startup-reload" type="button" hidden>重新整理</button><noscript><p>請啟用瀏覽器 JavaScript 後重新整理。</p></noscript></div>
+    </section>
+    <div class="app-shell" inert aria-busy="true">
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">A</div>
@@ -58,7 +157,7 @@
 
         <div class="runtime-status">
           <i id="serverDot"></i>
-          <div><strong id="serverStatus">連線檢查中</strong><span id="runtimeStatus">Automation Studio 2.0.2</span></div>
+          <div><strong id="serverStatus">連線檢查中</strong><span id="runtimeStatus">Automation Studio 2.0.6</span></div>
         </div>
       </aside>
 
@@ -199,30 +298,35 @@
             <aside class="designer-pane palette-pane">
               <div class="pane-heading"><div class="pane-heading-copy"><h2>動作元件</h2><p>點選以加入流程</p></div><div id="modern-palette-controls" class="palette-controls"></div></div>
               <div class="palette" id="stepPalette">
-                <button data-kind="navigate"><b>前往網址</b><span>在目前分頁開啟指定頁面</span></button>
-                <button data-kind="newTab"><b>開新分頁</b><span>建立並命名新的瀏覽器分頁</span></button>
-                <button data-kind="switchTab"><b>切換分頁</b><span>依名稱、網址、標題或順序切換</span></button>
-                <button data-kind="manual"><b>人工操作</b><span>完成後驗證再繼續</span></button>
-                <button data-kind="click"><b>點擊</b><span>按鈕、連結或清單項目</span></button>
-                <button data-kind="dblclick"><b>雙擊</b><span>開啟郵件或資料列</span></button>
-                <button data-kind="extractText"><b>擷取文字</b><span>讀取元件文字並存入變數</span></button>
-                <button data-kind="extractPattern"><b>擷取樣式</b><span>從變數找驗證碼或特定格式</span></button>
-                <button data-kind="clipboard"><b>複製剪貼簿</b><span>將文字或變數複製到剪貼簿</span></button>
-                <button data-kind="fill"><b>填入欄位</b><span>文字與參數</span></button>
-                <button data-kind="select"><b>選擇選項</b><span>下拉式選單</span></button>
-                <button data-kind="upload"><b>上傳檔案</b><span>選取本機檔案</span></button>
-                <button data-kind="press"><b>鍵盤按鍵</b><span>Enter、Tab 或快捷鍵</span></button>
-                <button data-kind="hover"><b>移至元件</b><span>觸發 hover 選單</span></button>
-                <button data-kind="check"><b>勾選</b><span>Checkbox / Radio</span></button>
-                <button data-kind="wait"><b>等待</b><span>時間或頁面狀態</span></button>
-                <button data-kind="waitNewFirst"><b>等待第一筆新資料</b><span>第一筆改變且符合條件後繼續</span></button>
-                <button data-kind="captureListSnapshot"><b>擷取清單快照</b><span>記錄目前前 N 筆資料作為基準</span></button>
-                <button data-kind="waitNewListItem"><b>等待清單新資料</b><span>找出基準集合以外的新項目</span></button>
-                <button data-kind="assert"><b>驗證</b><span>文字、值與可見性</span></button>
-                <button data-kind="download"><b>下載檔案</b><span>監控 popup 與下載</span></button>
-                <button data-kind="savePagePdf"><b>保存頁面 PDF</b><span>使用 Chromium 列印目前頁面並保存至預設下載資料夾</span></button>
-                <button data-kind="condition"><b>條件分支</b><span>依狀態判斷</span></button>
-                <button data-kind="loop"><b>迴圈</b><span>批次重複步驟</span></button>
+                <div class="palette-group-title" data-palette-group="nav">分頁與導覽</div>
+                <button data-kind="navigate" data-group="nav"><b>前往網址</b><span>在目前分頁開啟指定頁面</span></button>
+                <button data-kind="newTab" data-group="nav"><b>開新分頁</b><span>建立並命名新的瀏覽器分頁</span></button>
+                <button data-kind="switchTab" data-group="nav"><b>切換分頁</b><span>依名稱、網址、標題或順序切換</span></button>
+                <button data-kind="manual" data-group="nav"><b>人工操作</b><span>完成後驗證再繼續</span></button>
+                <div class="palette-group-title" data-palette-group="interact">頁面互動</div>
+                <button data-kind="click" data-group="interact"><b>點擊</b><span>按鈕、連結或清單項目</span></button>
+                <button data-kind="dblclick" data-group="interact"><b>雙擊</b><span>開啟郵件或資料列</span></button>
+                <button data-kind="fill" data-group="interact"><b>填入欄位</b><span>文字與參數</span></button>
+                <button data-kind="select" data-group="interact"><b>選擇選項</b><span>下拉式選單</span></button>
+                <button data-kind="check" data-group="interact"><b>勾選</b><span>Checkbox / Radio</span></button>
+                <button data-kind="hover" data-group="interact"><b>移至元件</b><span>觸發 hover 選單</span></button>
+                <button data-kind="press" data-group="interact"><b>鍵盤按鍵</b><span>Enter、Tab 或快捷鍵</span></button>
+                <button data-kind="upload" data-group="interact"><b>上傳檔案</b><span>選取本機檔案</span></button>
+                <div class="palette-group-title" data-palette-group="extract">擷取與剪貼簿</div>
+                <button data-kind="extractText" data-group="extract"><b>擷取文字</b><span>讀取元件文字並存入變數</span></button>
+                <button data-kind="extractPattern" data-group="extract"><b>擷取樣式</b><span>從變數找驗證碼或特定格式</span></button>
+                <button data-kind="clipboard" data-group="extract"><b>複製剪貼簿</b><span>將文字或變數複製到剪貼簿</span></button>
+                <div class="palette-group-title" data-palette-group="wait">等待與驗證</div>
+                <button data-kind="wait" data-group="wait"><b>等待</b><span>時間或頁面狀態</span></button>
+                <button data-kind="waitNewFirst" data-group="wait"><b>等待第一筆新資料</b><span>第一筆改變且符合條件後繼續</span></button>
+                <button data-kind="captureListSnapshot" data-group="wait"><b>擷取清單快照</b><span>記錄目前前 N 筆資料作為基準</span></button>
+                <button data-kind="waitNewListItem" data-group="wait"><b>等待清單新資料</b><span>找出基準集合以外的新項目</span></button>
+                <button data-kind="assert" data-group="wait"><b>驗證</b><span>文字、值與可見性</span></button>
+                <div class="palette-group-title" data-palette-group="flow">檔案與流程控制</div>
+                <button data-kind="download" data-group="flow"><b>下載檔案</b><span>監控 popup 與下載</span></button>
+                <button data-kind="savePagePdf" data-group="flow"><b>保存頁面 PDF</b><span>使用 Chromium 列印目前頁面並保存至預設下載資料夾</span></button>
+                <button data-kind="condition" data-group="flow"><b>條件分支</b><span>依狀態判斷</span></button>
+                <button data-kind="loop" data-group="flow"><b>迴圈</b><span>批次重複步驟</span></button>
               </div>
             </aside>
 
@@ -476,7 +580,7 @@
             <div>
               <span class="kicker">QUICK START & KNOWLEDGE BASE</span>
               <h2>Automation Studio 使用說明</h2>
-              <p>依 2.0.2 版介面整理：從專案與錄製、流程編輯、保存頁面 PDF，到測試、批次匯入匯出與發布。下方操作細節可按標題展開。</p>
+              <p>依 2.0.6 版介面整理：從專案與錄製、流程編輯、保存頁面 PDF，到測試、批次匯入匯出與發布。下方操作細節可按標題展開。</p>
             </div>
             <div class="help-hero-actions"><button class="button primary" data-go="workstation" type="button">開始設定專案</button><button class="button secondary" data-go="test" type="button">前往測試與 Debug</button></div>
           </section>
@@ -498,7 +602,7 @@
               <div class="section-heading"><div><h2>主要操作說明</h2><p>依功能頁面快速找到正確操作方式。</p></div></div>
               <div class="guide-list">
                 <article class="guide-article-expandable"><span class="guide-icon">站</span><div><b>網站與瀏覽器工作站</b><p>設定入口網址、允許網域及瀏覽器模式，再儲存專案設定。登入、跳轉或下載若使用其他網域，也要加入允許清單；子網域可明確使用 <code>*.example.com</code>。</p><div class="guide-inline-details"><details><summary>管理瀏覽器、CDP 與背景模式</summary><div class="guide-inline-content"><p><b>管理瀏覽器：</b>可選隨附 Chromium 或本機 Google Chrome；保存瀏覽器 Profile 可保留本機登入狀態，清除登入狀態會重設專案的登入資料。</p><p><b>背景模式（無頭模式／headless）：</b>可用於管理瀏覽器的流程執行。錄製仍會顯示瀏覽器；需要人工登入、MFA 或驗證碼的流程請使用可見瀏覽器。</p><p><b>Chrome CDP 接管：</b>連線至本機 Chrome 的偵錯端點，只允許 localhost、127.0.0.1 或 ::1。可設定端點無法連線時自動啟動 Chrome；背景模式不適用，流程結束後不會關閉使用者的 Chrome。</p><p><b>Stealth：</b>依專案選擇啟用，適用於管理瀏覽器的錄製、執行及匯出 TypeScript；CDP 接管不適用，也不保證通過網站驗證。</p></div></details><details><summary>錄製操作與 Frame／上傳</summary><div class="guide-inline-content"><p>啟動錄製後在瀏覽器實際操作，事件會即時顯示於工作站清單；確認事件後加入流程步驟，完成後停止錄製。Enter、Tab 及組合按鍵會記錄，密碼欄位的值不保存。</p><p>子 Frame 操作會保留 Frame 路徑。重新執行找不到元件時，檢查步驟的 Frame 設定與跨 Frame 搜尋。可用「選取驗證元素」建立可見、文字或欄位值驗證。</p><p>上傳事件只保存檔名，加入流程後須補填完整本機路徑並啟用步驟；多個檔案一行一個。</p></div></details></div></div></article>
-                <article class="guide-article-expandable"><span class="guide-icon">流</span><div><b>自動化設計器</b><p>階層清單及視覺畫布中，單擊只選取步驟，雙擊才開啟步驟設定。修改後套用步驟，並儲存專案。</p><div class="guide-inline-details"><details><summary>排序、收折與全螢幕</summary><div class="guide-inline-content"><p><b>拖曳排序：</b>在階層清單按住整張步驟卡片片刻後拖曳；放到目標卡上緣會插入前方，中央會交換位置，下緣會插入後方。排序限同一層級及同一分支，父步驟的子流程會一併保留；也可用上移／下移按鈕。</p><p><b>條件分支：</b>True／False 分支可各自收折，標題顯示步驟數。視覺畫布按「全螢幕」放大檢視，按 Esc 或退出按鈕返回。</p><p><b>動作元件：</b>預設收折，可手動展開或收合；滑鼠連續停留約 0.8 秒會暫時顯示完整清單，短暫經過不會展開。</p><p><b>執行資訊：</b>下方預設收折，執行時也不會自動展開。需要除錯時再查看日誌、Console、Network、Popup／Download 與變數；這些是目前執行的資訊，不是選取步驟的設定。</p></div></details><details><summary>選取元件與等待</summary><div class="guide-inline-content"><p>檢查 selector 與 Frame 路徑，重複元件可使用 first／last／nth。動態頁面優先加入「等待顯示」、等待網址或 Network Idle，避免只靠固定秒數。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">流</span><div><b>自動化設計器</b><p>階層清單及視覺畫布中，單擊只選取步驟，雙擊開啟右側步驟設定面板（不遮擋背景畫布，可邊對照流程邊編輯）。修改後套用步驟，並儲存專案。</p><div class="guide-inline-details"><details><summary>排序、收折與全螢幕</summary><div class="guide-inline-content"><p><b>拖曳排序：</b>在階層清單按住整張步驟卡片片刻後拖曳；放到目標卡上緣會插入前方，中央會交換位置，下緣會插入後方。排序限同一層級及同一分支，父步驟的子流程會一併保留；也可用上移／下移按鈕。</p><p><b>條件分支：</b>True／False 分支可各自收折，標題顯示步驟數。視覺畫布按「全螢幕」放大檢視，按 Esc 或退出按鈕返回。</p><p><b>動作元件：</b>依功能分為五大類別並支援關鍵字即時篩選；預設收折，可手動展開或收合，滑鼠連續停留約 0.8 秒會暫時顯示完整清單，短暫經過不會展開。</p><p><b>執行資訊：</b>下方預設收折，執行時也不會自動展開。需要除錯時再查看日誌、Console、Network、Popup／Download 與變數；這些是目前執行的資訊，不是選取步驟的設定。</p></div></details><details><summary>選取元件與等待</summary><div class="guide-inline-content"><p>檢查 selector 與 Frame 路徑，重複元件可使用 first／last／nth。動態頁面優先加入「等待顯示」、等待網址或 Network Idle，避免只靠固定秒數。</p></div></details></div></div></article>
                 <article class="guide-article-expandable"><span class="guide-icon">印</span><div><b>保存頁面 PDF</b><p>新增原生「保存頁面 PDF」動作，將目前頁面列印為 PDF，無須 selector。Studio 執行時存至「系統設定 → 預設下載路徑」，同名檔案會另編名稱避免覆蓋。</p><div class="guide-inline-details"><details><summary>檔名、版面、頁首／頁尾與縮放</summary><div class="guide-inline-content"><p><b>檔名：</b>可自訂，例如 <code>台灣銀行決算_品質檢測結果_20261007_103000.pdf</code>，也可使用 <code>{{參數}}</code>。自動使用本機時間命名預設啟用，時間取自執行電腦。</p><p><b>版面：</b>A4／Letter、直向／橫向、是否包含背景色、上／右／下／左邊界（各 0–50 mm），以及 10%–200% 縮放比例。</p><p><b>頁首／頁尾：</b>啟用輸出後填入 HTML 範本，並預留足夠的上下邊界。只填範本但未啟用，不會輸出頁首／頁尾。</p><p><b>完整頁面：</b>預設啟用，內容會依紙張尺寸分頁，可能產生多頁 PDF。網站的列印樣式也會影響輸出，請檢查實際 PDF 的版面。</p><p>設定後套用步驟再測試，執行日誌會顯示實際採用的紙張、方向、縮放與頁首／頁尾狀態。此功能與下載網站提供的 PDF 檔案不同。</p></div></details></div></div></article>
                 <article class="guide-article-expandable"><span class="guide-icon">參</span><div><b>參數與資料</b><p>以 <code>{{year}}</code> 等參數代換網址、selector 或填值。參數 Key 須以英文字母或底線開頭，後接英數字或底線，且不可重複。</p><div class="guide-inline-details"><details><summary>預設值、相依選項與敏感參數</summary><div class="guide-inline-content"><p>依資料設定型別、必填、預設值與固定選項；父子相依下拉選單及批次任務使用同一份定義。新增批次列會帶入非敏感參數的預設值；執行前仍須確認必填資料與相依選項。</p><p>密碼等資料請使用 secret 型別或標記為敏感。發布會清空這些參數的預設值，但一般文字與直接寫在步驟中的值仍會保留，請在發布前檢查。</p></div></details></div></div></article>
                 <article class="guide-article-expandable"><span class="guide-icon">測</span><div><b>測試與 Debug</b><p>先選擇適合的執行範圍驗證流程；執行失敗時可用內建 AI 分析，或下載遮罩後的診斷包提供外部 AI／支援人員。</p>
@@ -535,7 +639,7 @@
                   </div>
                 </div></article>
                 <article class="guide-article-expandable"><span class="guide-icon">批</span><div><b>批次任務</b><p>每列代表一組執行參數。「編號／執行」欄的勾選決定是否執行，欄位標題的勾選框可全選或全取消所有列，包括未捲動到的列。左側資料列選取用於複製、批次修改與刪除。</p><div class="guide-inline-details"><details><summary>編輯與匯入／匯出批次內容</summary><div class="guide-inline-content"><p>雙擊或按 Enter 編輯儲存格，方向鍵／Tab 移動，Ctrl／Cmd+V 可貼上 Excel 範圍。拖曳欄名可排序，拖曳分隔線調整寬度。</p><p><b>匯出批次內容：</b>支援 JSON 及 UTF-8 CSV，匯出整份清單（包含未勾選列），敏感參數不匯出。JSON 保存型別與執行勾選，適合備份；CSV 欄名使用參數 Key，<code>__studio_enabled</code> 為 true／false，匯入時省略則預設啟用。Excel 編輯代碼欄請使用文字格式保留前導零。</p><p><b>匯入批次內容：</b>先檢查資料，再選「加入目前清單」或「取代目前清單」。欄位、型別或相依選項錯誤時不變更原清單；未填完的必填內容可作為草稿匯入，執行前仍須補齊。每次上限 5 MB、10,000 筆。</p></div></details><details><summary>進階設定與 1–3 筆並行</summary><div class="guide-inline-content"><p>進階設定預設收折，按標題展開後可調整重試、播放方式、最小步驟間隔、截圖及同時執行數，變更會自動儲存。</p><p><b>管理瀏覽器：</b>預設 1 筆依序執行，可改為 2 或 3。並行批次各用獨立瀏覽器工作站；首次可能需要各自登入，之後同一工作站沿用批次工作階段及已完成的人工登入檢查點。執行紀錄標示工作站編號，暫停時完成操作後按繼續。</p><p><b>Chrome CDP：</b>共用既有瀏覽器，固定 1 筆依序執行。網站若限制同帳號多重登入，管理模式也請選 1；登入逾期或工作階段重建時可能需重新驗證。系統最多同時執行 3 筆，超過的任務等待排程。</p></div></details></div></div></article>
-                <article class="guide-article-expandable"><span class="guide-icon">發</span><div><b>發布與版本</b><p>測試完整流程後再發布。可攜工作流程 ZIP 可匯入另一台 Automation Studio；TypeScript 可獨立執行；SKILL.md 提供使用指引。瀏覽器 Profile、Cookie 與登入工作階段不會攜出，敏感參數預設值會清空；一般文字或步驟內直接填入的資料仍會保留。</p><div class="guide-inline-details"><details><summary>系統版本與專案版本怎麼區分？</summary><div class="guide-inline-content"><p><b>Automation Studio 系統版本</b>採 MAJOR.MINOR.PATCH；第二、第三段限定 0–9，超過 9 向前進位，例如 1.9.0 → 2.0.0、2.0.9 → 2.1.0。新增功能升 MINOR，修正升 PATCH。目前系統版本為 <b>2.0.2</b>。<b>專案版本號</b>則屬於個別工作流程，可由使用者自行管理，兩者互不影響。進位至新主版不代表流程資料不相容。</p></div></details></div></div></article>
+                <article class="guide-article-expandable"><span class="guide-icon">發</span><div><b>發布與版本</b><p>測試完整流程後再發布。可攜工作流程 ZIP 可匯入另一台 Automation Studio；TypeScript 可獨立執行；SKILL.md 提供使用指引。瀏覽器 Profile、Cookie 與登入工作階段不會攜出，敏感參數預設值會清空；一般文字或步驟內直接填入的資料仍會保留。</p><div class="guide-inline-details"><details><summary>系統版本與專案版本怎麼區分？</summary><div class="guide-inline-content"><p><b>Automation Studio 系統版本</b>採 MAJOR.MINOR.PATCH；第二、第三段限定 0–9，超過 9 向前進位，例如 1.9.0 → 2.0.0、2.0.9 → 2.1.0。新增功能升 MINOR，修正升 PATCH。目前系統版本為 <b>2.0.6</b>。<b>專案版本號</b>則屬於個別工作流程，可由使用者自行管理，兩者互不影響。進位至新主版不代表流程資料不相容。</p></div></details></div></div></article>
                 <article class="guide-article-expandable"><span class="guide-icon">設</span><div><b>系統設定與開發者功能</b><p>系統設定可調整外觀、預設下載路徑、紀錄保留及支援信箱；AI Provider 可展開後設定。服務啟動就緒後固定自動開啟介面，沒有取消選項，與流程背景模式分開管理。</p><div class="guide-inline-details"><details><summary>執行紀錄、Debug 清理與工作流程原始碼</summary><div class="guide-inline-content"><p>「執行紀錄」可展開結果、下載檔案及開啟資料夾，失敗且仍有 Debug 資料時可下載診斷包。Debug 與執行紀錄的保留天數分開設定；僅失敗保留模式會移除成功任務的 Debug。可手動清理過期資料，刪除執行紀錄不會刪除已下載的檔案。</p><p>「開發者功能」中的 AI 流程助理可探索頁面並建立可編輯草稿，請檢查修改後再送出及測試；AI 呼叫依 Provider 設定可能需要網路。「工作流程原始碼」提供 JSON 編輯，按「套用 JSON」檢查基本結構，不可更換目前專案 ID；修改後仍須實際測試。</p></div></details></div></div></article>
               </div>
             </section>
@@ -576,6 +680,7 @@
                 <p><b>下載位置：</b>匯出的專案不會自動讀取 Studio 系統設定。「保存頁面 PDF」使用 <code>DOWNLOAD_DIR</code> 環境變數，未設定時存入執行目錄的 <code>downloads</code>。</p>
                 <div class="faq-note"><b>離線／內網環境：</b>如果執行電腦無法連到 npm 或 Playwright 下載站，應先在可連網環境完成 <code>npm install</code> 與需要的瀏覽器安裝，再依單位軟體供應政策準備離線套件；不要為了繞過公司憑證而關閉 TLS 驗證。</div>
               </details>
+              <details><summary>啟動時顯示「正在載入介面」或載入失敗怎麼辦？</summary><p>啟動會先準備新版介面與工作空間資料，完成後才顯示功能頁面。超過 30 秒會提示可繼續等候或重新整理；若顯示載入失敗，確認服務仍在執行且程式檔案完整後按「重新整理」。不會自動切回舊版畫面。</p></details>
               <details><summary>遇到無法自行排除的問題怎麼辦？</summary><p>使用左側「回報問題」，填寫重現步驟與實際結果。系統會開啟預設郵件程式中的草稿，需自行確認並寄送；沒有郵件程式時可複製回報內容。必要時另附經檢查的畫面截圖。</p></details>
             </div>
           </section>
@@ -618,7 +723,7 @@
             <aside class="card report-preview-card">
               <div class="section-heading"><div><h2>將自動附帶</h2><p>協助支援人員快速辨識環境，不包含敏感資料。</p></div></div>
               <ul class="report-context-list">
-                <li><b>系統版本</b><span>Automation Studio V2.0.2</span></li>
+                <li><b>系統版本</b><span>Automation Studio V2.0.6</span></li>
                 <li><b>目前專案</b><span id="reportProjectName">—</span></li>
                 <li><b>專案 ID</b><span id="reportProjectId">—</span></li>
                 <li><b>瀏覽器模式</b><span id="reportBrowserMode">—</span></li>
@@ -652,7 +757,7 @@
     <script src="./app.js"></script>
   <!-- MODERN START -->
     <script src="/bridge.js"></script>
-    <script type="module" src="/modern/studio.js?v=2.0.2"></script>
+    <script id="studio-modern-script" type="module" src="/modern/studio.js?v=2.0.6-step-selection"></script>
     <!-- MODERN END -->
   </body>
 </html>

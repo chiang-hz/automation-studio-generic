@@ -24197,8 +24197,12 @@ function LM({ open: e, onOpenChange: t, title: n, description: r, children: i, s
 	return /* @__PURE__ */ (0, Y.jsx)(_M, {
 		open: e,
 		onOpenChange: t,
-		children: /* @__PURE__ */ (0, Y.jsxs)(xM, { children: [/* @__PURE__ */ (0, Y.jsx)(CM, { className: "ui-overlay" }), /* @__PURE__ */ (0, Y.jsxs)(DM, {
+		modal: !a,
+		children: /* @__PURE__ */ (0, Y.jsxs)(xM, { children: [!a && /* @__PURE__ */ (0, Y.jsx)(CM, { className: "ui-overlay" }), /* @__PURE__ */ (0, Y.jsxs)(DM, {
 			className: a ? "ui-sheet" : "ui-dialog",
+			onInteractOutside: (e) => {
+				a && e.preventDefault();
+			},
 			onCloseAutoFocus: (e) => {
 				e.preventDefault(), document.getElementById("command-open")?.focus();
 			},
@@ -24224,23 +24228,35 @@ var RM = {
 	switchTab: ap,
 	click: jp,
 	dblclick: jp,
+	hover: jp,
+	fill: Nm,
+	select: _p,
+	check: hf,
+	press: jm,
+	upload: zm,
+	extractText: nf,
+	extractPattern: sm,
+	clipboard: kf,
+	wait: Df,
+	waitNewFirst: Df,
+	captureListSnapshot: _p,
+	waitNewListItem: Df,
+	assert: hf,
 	download: Nf,
 	savePagePdf: zf,
 	manual: hm,
 	condition: tp,
-	loop: $p,
-	fill: Nm,
-	wait: Df
+	loop: $p
 };
 function zM({ kind: e }) {
 	let t = RM[e] ?? Gm;
 	return /* @__PURE__ */ (0, Y.jsx)("span", {
 		className: `action-icon kind-${e}`,
-		children: /* @__PURE__ */ (0, Y.jsx)(t, { size: 18 })
+		children: /* @__PURE__ */ (0, Y.jsx)(t, { size: 17 })
 	});
 }
 function BM(e) {
-	Ch.getState().setSheet(!1), Z.select(e);
+	Z.select(e);
 }
 function VM(e) {
 	Z.select(e), Ch.getState().setSheet(!0);
@@ -24292,7 +24308,11 @@ function HM({ step: e }) {
 	});
 }
 function UM({ owner: e = null, branch: t = "steps", index: n }) {
-	let [r, i] = (0, J.useState)(!1);
+	let [r, i] = (0, J.useState)(!1), [a, o] = (0, J.useState)("");
+	(0, J.useEffect)(() => {
+		r || o("");
+	}, [r]);
+	let s = Array.from(document.querySelectorAll("#stepPalette [data-kind]")).map((e) => e.dataset.kind), c = a.trim().toLowerCase(), l = c ? s.filter((e) => `${Z.kindLabel(e)} ${e}`.toLowerCase().includes(c)) : s;
 	return /* @__PURE__ */ (0, Y.jsxs)(Y.Fragment, { children: [/* @__PURE__ */ (0, Y.jsx)(Q, {
 		variant: "ghost",
 		size: "sm",
@@ -24301,14 +24321,22 @@ function UM({ owner: e = null, branch: t = "steps", index: n }) {
 		title: "在此插入動作",
 		onClick: () => i(!0),
 		children: /* @__PURE__ */ (0, Y.jsx)(qp, { size: 14 })
-	}), /* @__PURE__ */ (0, Y.jsx)(LM, {
+	}), /* @__PURE__ */ (0, Y.jsxs)(LM, {
 		open: r,
 		onOpenChange: i,
 		title: "插入動作",
 		description: "新步驟會插入您選取的位置，保留原有流程順序。",
-		children: /* @__PURE__ */ (0, Y.jsx)("div", {
+		children: [/* @__PURE__ */ (0, Y.jsxs)("div", {
+			className: "insert-search",
+			children: [/* @__PURE__ */ (0, Y.jsx)(sm, { size: 15 }), /* @__PURE__ */ (0, Y.jsx)("input", {
+				value: a,
+				onChange: (e) => o(e.target.value),
+				placeholder: "搜尋動作元件…",
+				"aria-label": "搜尋要插入的動作元件"
+			})]
+		}), /* @__PURE__ */ (0, Y.jsx)("div", {
 			className: "insert-options",
-			children: Array.from(document.querySelectorAll("#stepPalette [data-kind]")).map((e) => e.dataset.kind).map((r) => /* @__PURE__ */ (0, Y.jsxs)("button", {
+			children: l.map((r) => /* @__PURE__ */ (0, Y.jsxs)("button", {
 				onClick: () => {
 					try {
 						Z.insert(r, e, t, n), i(!1), Ch.getState().setSheet(!0);
@@ -24318,14 +24346,39 @@ function UM({ owner: e = null, branch: t = "steps", index: n }) {
 				},
 				children: [/* @__PURE__ */ (0, Y.jsx)(zM, { kind: r }), Z.kindLabel(r)]
 			}, r))
-		})
+		})]
 	})] });
 }
 function WM(e) {
 	return e.reduce((e, t) => e + 1 + (t.kind === "condition" ? WM(t.thenSteps ?? []) + WM(t.elseSteps ?? []) : t.kind === "loop" ? WM(t.steps ?? []) : 0), 0);
 }
+const __branchCollapsePrefix = "automation-studio:branch-collapsed:v1:";
+function __branchCollapseKey(projectId, stepId, branch) { return __branchCollapsePrefix + encodeURIComponent(projectId) + ":" + encodeURIComponent(stepId) + ":" + branch; }
+function __readBranchCollapse(key) { try { return localStorage.getItem(key) === "1"; } catch { return false; } }
+function __writeBranchCollapse(key, collapsed) { try { if (collapsed) localStorage.setItem(key, "1"); else localStorage.removeItem(key); } catch {} }
+function __clearDeletedBranches(projectId, steps) {
+  if (!projectId) return;
+  try {
+    const ids = new Set();
+    const gather = (items) => { for (const item of items) { ids.add(item.id); gather(item.thenSteps || []); gather(item.elseSteps || []); gather(item.steps || []); } };
+    gather(steps);
+    const prefix = __branchCollapsePrefix + encodeURIComponent(projectId) + ":";
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const remainder = key.slice(prefix.length), colon = remainder.lastIndexOf(":");
+      if (colon < 0) continue;
+      let id; try { id = decodeURIComponent(remainder.slice(0,colon)); } catch { continue; }
+      if (!ids.has(id)) localStorage.removeItem(key);
+    }
+  } catch {}
+}
 function GM({ step: e, branch: t, label: n, variant: r, depth: i }) {
-	let [a, o] = (0, J.useState)(!1), s = t === "thenSteps" ? e.thenSteps ?? [] : e.elseSteps ?? [], c = `${e.id}-${t}-content`, l = `${WM(s)} 個步驟`;
+	let projectId = Ch((state) => state.snapshot.state.project?.id ?? "");
+  let preferenceKey = __branchCollapseKey(projectId, e.id, t);
+  let [saved, setSaved] = (0, J.useState)(() => ({ key: preferenceKey, collapsed: __readBranchCollapse(preferenceKey) }));
+  let a = saved.key === preferenceKey ? saved.collapsed : __readBranchCollapse(preferenceKey);
+  let s = t === "thenSteps" ? e.thenSteps ?? [] : e.elseSteps ?? [], c = `${e.id}-${t}-content`, l = `${WM(s)} 個步驟`;
 	return /* @__PURE__ */ (0, Y.jsxs)("section", {
 		className: a ? "is-collapsed" : "",
 		children: [/* @__PURE__ */ (0, Y.jsxs)("button", {
@@ -24334,7 +24387,7 @@ function GM({ step: e, branch: t, label: n, variant: r, depth: i }) {
 			"aria-controls": c,
 			"aria-expanded": !a,
 			"aria-label": `${a ? "展開" : "收合"}${n}分支，${l}`,
-			onClick: () => o((e) => !e),
+			onClick: () => { const next = !a; __writeBranchCollapse(preferenceKey, next); setSaved({ key: preferenceKey, collapsed: next }); },
 			children: [
 				/* @__PURE__ */ (0, Y.jsx)(sf, {
 					size: 14,
@@ -24389,7 +24442,7 @@ function qM({ steps: e, owner: t = null, branch: n = "steps", depth: r = 0 }) {
 			/* @__PURE__ */ (0, Y.jsxs)("article", {
 				tabIndex: 0,
 				draggable: !0,
-				title: "單擊選取，雙擊編輯；按住後拖曳：上緣插入前方、中央交換、下緣插入後方",
+				title: "單擊選取，雙擊開啟右側步驟設定；按住後拖曳：上緣插入前方、中央交換、下緣插入後方",
 				"data-modern-step": h.id,
 				className: `modern-step ${i === h.id ? "selected" : ""} ${h.enabled ? "" : "disabled"} ${o === h.id ? "drag-ready" : ""} ${c?.id === h.id ? "drop-" + c.mode : ""}`,
 				onPointerDown: (e) => {
@@ -24642,6 +24695,7 @@ function qee() {
 			onNodeClick: (e, t) => {
 				t.type === "step" && BM(t.id);
 			},
+			onPaneClick: () => Ch.getState().setSheet(!1),
 			onNodeDoubleClick: (e, t) => {
 				t.type === "step" && VM(t.id);
 			},
@@ -24670,8 +24724,8 @@ function qee() {
 	});
 }
 function Jee() {
-	let { snapshot: e, mode: t, setMode: n, setSheet: r } = Ch(), [i, a] = (0, J.useState)(0), o = (0, J.useRef)([]), s = (0, J.useRef)(null), c = (0, J.useRef)(!1);
-	return (0, J.useEffect)(() => {
+	let { snapshot: e, mode: t, setMode: n, setSheet: r, sheet: u } = Ch(), [i, a] = (0, J.useState)(0), o = (0, J.useRef)([]), s = (0, J.useRef)(null), c = (0, J.useRef)(!1);
+	(0, J.useEffect)(() => {
 		let t = e.state.project?.id ?? "", n = structuredClone(e.state.project?.steps ?? []), r = {
 			projectId: t,
 			steps: n,
@@ -24679,49 +24733,67 @@ function Jee() {
 			signature: JSON.stringify(n)
 		}, i = s.current;
 		!i || i.projectId !== t ? (o.current = [], a(0)) : i.signature !== r.signature && (c.current ? c.current = !1 : (o.current.push(i), o.current.length > 50 && o.current.shift(), a(o.current.length))), s.current = r;
-	}, [e.revision, e.state.project?.id]), /* @__PURE__ */ (0, Y.jsxs)(Y.Fragment, { children: [/* @__PURE__ */ (0, Y.jsxs)("div", {
+	}, [e.revision, e.state.project?.id]);
+	(0, J.useEffect)(() => { const project = e.state.project; if (project) __clearDeletedBranches(project.id, project.steps); }, [e.state.project?.id, e.revision]);
+	let d = Z.selected();
+	return /* @__PURE__ */ (0, Y.jsxs)(Y.Fragment, { children: [/* @__PURE__ */ (0, Y.jsxs)("div", {
 		className: "modern-designer-toolbar",
 		children: [/* @__PURE__ */ (0, Y.jsxs)("div", {
 			className: "designer-toolbar-left",
-			children: [/* @__PURE__ */ (0, Y.jsxs)("div", {
-				className: "segmented",
-				children: [/* @__PURE__ */ (0, Y.jsxs)(Q, {
-					variant: t === "list" ? "secondary" : "ghost",
+			children: [
+				/* @__PURE__ */ (0, Y.jsxs)("div", {
+					className: "segmented",
+					children: [/* @__PURE__ */ (0, Y.jsxs)(Q, {
+						variant: t === "list" ? "secondary" : "ghost",
+						size: "sm",
+						onClick: () => n("list"),
+						children: [/* @__PURE__ */ (0, Y.jsx)(_p, { size: 15 }), "階層清單"]
+					}), /* @__PURE__ */ (0, Y.jsxs)(Q, {
+						variant: t === "canvas" ? "secondary" : "ghost",
+						size: "sm",
+						onClick: () => n("canvas"),
+						children: [/* @__PURE__ */ (0, Y.jsx)(Gm, { size: 15 }), "視覺畫布"]
+					})]
+				}),
+				/* @__PURE__ */ (0, Y.jsxs)(Q, {
 					size: "sm",
-					onClick: () => n("list"),
-					children: [/* @__PURE__ */ (0, Y.jsx)(_p, { size: 15 }), "階層清單"]
-				}), /* @__PURE__ */ (0, Y.jsxs)(Q, {
-					variant: t === "canvas" ? "secondary" : "ghost",
-					size: "sm",
-					onClick: () => n("canvas"),
-					children: [/* @__PURE__ */ (0, Y.jsx)(Gm, { size: 15 }), "視覺畫布"]
-				})]
-			}), /* @__PURE__ */ (0, Y.jsxs)(Q, {
-				size: "sm",
-				variant: "ghost",
-				title: "復原最近一次步驟變更",
-				"aria-label": "復原最近一次步驟變更",
-				disabled: !i,
-				onClick: () => {
-					let t = o.current.pop();
-					if (t && t.projectId === e.state.project?.id) {
-						if (c.current = !0, !Z.restoreSteps(t.steps, t.selectedStepId)) {
-							c.current = !1, o.current.push(t);
-							return;
+					variant: "ghost",
+					title: "復原最近一次步驟變更",
+					"aria-label": "復原最近一次步驟變更",
+					disabled: !i,
+					onClick: () => {
+						let t = o.current.pop();
+						if (t && t.projectId === e.state.project?.id) {
+							if (c.current = !0, !Z.restoreSteps(t.steps, t.selectedStepId)) {
+								c.current = !1, o.current.push(t);
+								return;
+							}
+							a(o.current.length), queueMicrotask(() => Ch.getState().setSheet(!1)), Z.toast("已復原上一個步驟變更");
 						}
-						a(o.current.length), queueMicrotask(() => Ch.getState().setSheet(!1)), Z.toast("已復原上一個步驟變更");
-					}
-				},
-				children: [/* @__PURE__ */ (0, Y.jsx)(Lm, { size: 15 }), "復原"]
-			})]
+					},
+					children: [/* @__PURE__ */ (0, Y.jsx)(Lm, { size: 15 }), "復原"]
+				}),
+				d && /* @__PURE__ */ (0, Y.jsxs)("span", {
+					className: "designer-selected-pill",
+					children: [/* @__PURE__ */ (0, Y.jsx)("span", {
+						className: "mono",
+						children: d.name
+					}), /* @__PURE__ */ (0, Y.jsx)("small", { children: Z.kindLabel(d.kind) })]
+				})
+			]
 		}), /* @__PURE__ */ (0, Y.jsxs)(Q, {
 			size: "sm",
+			variant: u ? "primary" : "secondary",
 			disabled: !e.state.selectedStepId,
-			onClick: () => r(!0),
+			onClick: () => r(!u),
 			children: [/* @__PURE__ */ (0, Y.jsx)(lm, { size: 15 }), "步驟設定"]
 		})]
 	}), e.state.project ? t === "canvas" ? /* @__PURE__ */ (0, Y.jsx)(qee, {}) : /* @__PURE__ */ (0, Y.jsxs)("div", {
 		className: "modern-list",
+		onClick: (e) => {
+			let t = e.target;
+			if (t instanceof Element && !t.closest('[data-modern-step],.modern-branches,.modern-loop,.insert-slot,button,a,input,select,textarea,[role="dialog"]')) Ch.getState().setSheet(!1);
+		},
 		children: [
 			/* @__PURE__ */ (0, Y.jsx)("div", {
 				className: "workflow-boundary",
@@ -24739,20 +24811,22 @@ function Jee() {
 	})] });
 }
 function Yee() {
-	let { sheet: e, setSheet: t, snapshot: n } = Ch(), r = (0, J.useRef)(null), i = (0, J.useRef)(null), a = (0, J.useCallback)((e) => {
+	let { sheet: e, setSheet: t, snapshot: n } = Ch(), r = (0, J.useRef)(null), i = (0, J.useRef)(null), o = e && n.view === "designer";
+	(0, J.useEffect)(() => (document.documentElement.classList.toggle("designer-sheet-open", o), () => document.documentElement.classList.remove("designer-sheet-open")), [o]);
+	let a = (0, J.useCallback)((e) => {
 		if (e) {
 			let t = document.querySelector(".properties-pane");
 			if (!t) return;
 			let n = document.createElement("div");
 			t.before(n), r.current = t, i.current = n, e.append(t);
 		} else r.current && i.current && (i.current.replaceWith(r.current), r.current = null, i.current = null);
-	}, []);
+	}, []), s = Z.selected();
 	return /* @__PURE__ */ (0, Y.jsx)(LM, {
-		open: e && n.view === "designer",
+		open: o,
 		onOpenChange: t,
 		sheet: !0,
 		title: "步驟設定",
-		description: Z.selected()?.name ?? "選取步驟後編輯",
+		description: s ? `${s.name} · ${Z.kindLabel(s.kind)}` : "選取步驟後編輯",
 		children: /* @__PURE__ */ (0, Y.jsx)("div", {
 			ref: a,
 			className: "property-mount"
@@ -30648,19 +30722,15 @@ function VI(e) {
 }
 function HI() {
 	let { snapshot: e } = Ch(), t = (0, J.useRef)(null), n = e.state.settings ?? {}, [r, i] = (0, J.useState)(() => {
-		let e = localStorage.getItem("studio-ui-theme");
-		return {
-			...n,
-			theme: e === "light" || e === "dark" ? e : n.theme
-		};
+		return { ...n };
 	}), [a, o] = (0, J.useState)({
 		debug: n.debugCleanupStatus,
 		runs: n.runHistoryCleanupStatus
 	}), [s, c] = (0, J.useState)(null), l = (0, J.useRef)(!1);
 	(0, J.useEffect)(() => VI(t.current), []), (0, J.useEffect)(() => {
 		if (!l.current) {
-			let t = { ...e.state.settings ?? {} }, n = localStorage.getItem("studio-ui-theme");
-			(n === "light" || n === "dark") && (t.theme = n), i(t), o({
+			let t = { ...e.state.settings ?? {} };
+			i(t), o({
 				debug: t.debugCleanupStatus,
 				runs: t.runHistoryCleanupStatus
 			}), Z.syncSettingsDraft(t);
@@ -62337,7 +62407,7 @@ function Tne({ sourceView: e }) {
 						children: "HELP & SUPPORT"
 					}),
 					/* @__PURE__ */ (0, Y.jsx)("h2", { children: "使用說明" }),
-					/* @__PURE__ */ (0, Y.jsx)("p", { children: "流程編輯、PDF 保存、批次資料與發布的操作指南，已依 2.0.2 版更新。" })
+					/* @__PURE__ */ (0, Y.jsx)("p", { children: "流程編輯、PDF 保存、批次資料與發布的操作指南，已依 2.0.6 版更新。" })
 				] }),
 				/* @__PURE__ */ (0, Y.jsxs)(Q, {
 					variant: "secondary",
@@ -62552,7 +62622,7 @@ function Ene() {
 				/* @__PURE__ */ (0, Y.jsxs)("dl", {
 					className: "report-context",
 					children: [
-						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "系統版本" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: "Automation Studio V2.0.2" })] }),
+						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "系統版本" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: "Automation Studio V2.0.6" })] }),
 						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "目前專案" }), /* @__PURE__ */ (0, Y.jsx)("dd", { children: o?.name ?? "尚未開啟專案" })] }),
 						/* @__PURE__ */ (0, Y.jsxs)("div", { children: [/* @__PURE__ */ (0, Y.jsx)("dt", { children: "專案 ID" }), /* @__PURE__ */ (0, Y.jsx)("dd", {
 							className: "mono",
@@ -63274,9 +63344,9 @@ function q9(e, t, n, r = "div") {
 	let i = document.getElementById(e);
 	return i || (i = document.createElement(r), i.id = e, t.insertBefore(i, n ?? null)), i;
 }
-var nre = q9("modern-designer", document.querySelector(".canvas-pane")), rre = q9("modern-batch", document.querySelector(".batch-list-card")), ire = q9("modern-debug", document.getElementById("testView"), document.querySelector(".comparison-card")), are = q9("modern-ai-chat", document.querySelector(".ai-chat-panel"), document.querySelector("#aiWorkflowConversation")), ore = q9("modern-ai-diff", document.querySelector(".ai-workflow-preview-card"), document.querySelector("#aiWorkflowPreview")), sre = q9("modern-ai-bar", document.body), cre = q9("modern-diagnostics", document.getElementById("debugAIPatchPanel"), document.getElementById("debugAIPatchPreview")), lre = q9("modern-runs", document.querySelector("#runsView > .card")), ure = q9("modern-dashboard", document.getElementById("dashboardView")), dre = q9("modern-parameters", document.getElementById("parametersView")), fre = q9("modern-publish", document.getElementById("publishView")), pre = q9("modern-workstation", document.getElementById("workstationView")), mre = q9("modern-settings", document.getElementById("settingsView")), hre = q9("modern-help", document.getElementById("helpView")), gre = q9("modern-report", document.getElementById("reportView")), _re = q9("modern-developer", document.getElementById("developerView")), vre = document.getElementById("helpView"), yre = q9("modern-global-controls", document.querySelector(".topbar")), bre = q9("modern-sidebar-toggle", document.body), xre = q9("modern-project-switcher-icon", document.querySelector(".project-select-control"), null, "span"), J9 = document.querySelector("#newProjectButton .sidebar-action-icon"), Y9 = document.querySelector("#importProjectButton .sidebar-action-icon");
+var nre = q9("modern-designer", document.querySelector(".canvas-pane")), rre = q9("modern-batch", document.querySelector(".batch-list-card")), ire = q9("modern-debug", document.getElementById("testView"), document.querySelector(".comparison-card")), are = q9("modern-ai-chat", document.querySelector(".ai-chat-panel"), document.querySelector("#aiWorkflowConversation")), ore = q9("modern-ai-diff", document.querySelector(".ai-workflow-preview-card"), document.querySelector("#aiWorkflowPreview")), sre = q9("modern-ai-bar", document.body), cre = q9("modern-diagnostics", document.getElementById("debugAIPatchPanel"), document.getElementById("debugAIPatchPreview")), lre = q9("modern-runs", document.querySelector("#runsView > .card")), ure = q9("modern-dashboard", document.getElementById("dashboardView")), dre = q9("modern-parameters", document.getElementById("parametersView")), fre = q9("modern-publish", document.getElementById("publishView")), pre = q9("modern-workstation", document.getElementById("workstationView")), mre = q9("modern-settings", document.getElementById("settingsView")), hre = q9("modern-help", document.getElementById("helpView")), gre = q9("modern-report", document.getElementById("reportView")), _re = q9("modern-developer", document.getElementById("developerView")), vre = document.getElementById("helpView"), yre = q9("modern-global-controls", document.querySelector(".topbar"), document.getElementById("workspaceTopbarActions")), bre = q9("modern-sidebar-toggle", document.body), xre = q9("modern-project-switcher-icon", document.querySelector(".project-select-control"), null, "span"), J9 = document.querySelector("#newProjectButton .sidebar-action-icon"), Y9 = document.querySelector("#importProjectButton .sidebar-action-icon");
 J9.replaceChildren(), Y9.replaceChildren();
-var Sre = q9("modern-palette-controls", document.querySelector(".palette-pane .pane-heading")), X9 = q9("modern-developer-summary-icon", document.querySelector(".developer-menu > summary"));
+var Sre = q9("modern-palette-controls", document.querySelector(".palette-pane .pane-heading")), Pre = q9("modern-palette-search", document.querySelector(".palette-pane"), document.getElementById("stepPalette")), X9 = q9("modern-developer-summary-icon", document.querySelector(".developer-menu > summary"));
 X9.classList.add("modern-developer-summary-icon");
 var Z9 = document.querySelector(".developer-menu .developer-link > span");
 Z9.id = "modern-developer-legacy-icon", Z9.replaceChildren(), document.querySelectorAll(".nav-item>span,.developer-menu button[data-view]>span").forEach((e) => e.replaceChildren());
@@ -63289,11 +63359,10 @@ function Q9(e) {
 	return e instanceof HTMLElement && !!e.closest("input,textarea,select,[contenteditable=\"\"],[contenteditable=\"true\"],[role=\"textbox\"],.monaco-editor");
 }
 function wre() {
-	let { snapshot: e, setCommand: t } = Ch(), [n, r] = (0, J.useState)(() => localStorage.getItem("studio-sidebar-collapsed") === "true"), [i, a] = (0, J.useState)([]), [o, s] = (0, J.useState)(() => localStorage.getItem("studio-palette-collapsed-v2") !== "false"), [c, l] = (0, J.useState)(!1);
-	return (0, J.useEffect)(() => {
+	let { snapshot: e, setCommand: t } = Ch(), [n, r] = (0, J.useState)(() => localStorage.getItem("studio-sidebar-collapsed") === "true"), [i, a] = (0, J.useState)([]), [o, s] = (0, J.useState)(() => localStorage.getItem("studio-palette-collapsed-v2") !== "false"), [c, l] = (0, J.useState)(!1), [u, d] = (0, J.useState)("");
+	return (0, J.useLayoutEffect)(() => {
 		document.documentElement.classList.add("modern-active"), document.documentElement.classList.add("react-dashboard-active"), document.documentElement.classList.add("react-parameters-active"), document.documentElement.classList.add("react-publish-active"), document.documentElement.classList.add("react-workstation-active", "react-settings-active", "react-report-active", "react-developer-active");
-		let e = localStorage.getItem("studio-ui-theme");
-		(e === "light" || e === "dark") && Z.setTheme(e), Ch.getState().refresh();
+		Ch.getState().refresh(), window.studioStartup?.complete("ui");
 	}, []), (0, J.useEffect)(() => {
 		document.documentElement.classList.toggle("sidebar-collapsed", n), localStorage.setItem("studio-sidebar-collapsed", String(n));
 	}, [n]), (0, J.useEffect)(() => {
@@ -63312,6 +63381,17 @@ function wre() {
 	}, [o]), (0, J.useEffect)(() => {
 		document.querySelector(".palette-pane")?.classList.toggle("is-peeking", c);
 	}, [c]), (0, J.useEffect)(() => {
+		let e = u.trim().toLowerCase();
+		document.querySelectorAll("#stepPalette button[data-kind]").forEach((t) => {
+			let n = `${t.textContent ?? ""} ${t.dataset.kind ?? ""}`.toLowerCase();
+			t.hidden = !!(e && !n.includes(e));
+		}), document.querySelectorAll("#stepPalette .palette-group-title").forEach((t) => {
+			let n = t.dataset.paletteGroup;
+			if (!n) return;
+			let r = document.querySelectorAll(`#stepPalette button[data-group="${n}"]`);
+			t.hidden = !!(e && r.length > 0 && [...r].every((e) => e.hidden));
+		});
+	}, [u]), (0, J.useEffect)(() => {
 		let t = e.view === "designer" ? "#stepSelectors,#regexPattern" : e.view === "developer" ? "#workflowJson" : e.view === "parameters" ? "#parameterDependentOptions" : "", n = t ? [...document.querySelectorAll(t)] : [];
 		a((e) => {
 			let t = n.map((t) => {
@@ -63375,7 +63455,7 @@ function wre() {
 				className: "command-launch",
 				"aria-label": "搜尋與指令，Ctrl 或 Command 加 K",
 				children: [
-					/* @__PURE__ */ (0, Y.jsx)(sm, { size: 16 }),
+					/* @__PURE__ */ (0, Y.jsx)(sm, { size: 15 }),
 					/* @__PURE__ */ (0, Y.jsx)("span", { children: "搜尋與指令" }),
 					/* @__PURE__ */ (0, Y.jsx)("kbd", { children: "Ctrl K" })
 				]
@@ -63384,8 +63464,19 @@ function wre() {
 				variant: "ghost",
 				title: "切換深淺色",
 				"aria-label": "切換深淺色",
-				onClick: () => Z.setTheme(e.theme === "dark" ? "light" : "dark"),
-				children: e.theme === "dark" ? /* @__PURE__ */ (0, Y.jsx)(Dm, { size: 17 }) : /* @__PURE__ */ (0, Y.jsx)(kp, { size: 17 })
+				onClick: async () => {
+                    const previous = e.state.settings?.theme ?? "system";
+                    const next = e.theme === "dark" ? "light" : "dark";
+                    Z.setTheme(next);
+                    try {
+                        const result = await xI.updateSettings({ ...e.state.settings ?? {}, theme: next });
+                        Z.adoptSettings(result.settings);
+                    } catch (error) {
+                        Z.setTheme(previous);
+                        Z.toast(`無法儲存介面配色：${error instanceof Error ? error.message : String(error)}`, true);
+                    }
+                },
+				children: e.theme === "dark" ? /* @__PURE__ */ (0, Y.jsx)(Dm, { size: 16 }) : /* @__PURE__ */ (0, Y.jsx)(kp, { size: 16 })
 			})]
 		}), yre),
 		(0, eh.createPortal)(/* @__PURE__ */ (0, Y.jsx)(Q, {
@@ -63401,6 +63492,24 @@ function wre() {
 			},
 			children: o ? /* @__PURE__ */ (0, Y.jsx)(Vp, { size: 16 }) : /* @__PURE__ */ (0, Y.jsx)(zp, { size: 16 })
 		}), Sre),
+		(0, eh.createPortal)(/* @__PURE__ */ (0, Y.jsxs)("div", {
+			className: "palette-search-box",
+			children: [
+				/* @__PURE__ */ (0, Y.jsx)(sm, { size: 13 }),
+				/* @__PURE__ */ (0, Y.jsx)("input", {
+					value: u,
+					onChange: (e) => d(e.target.value),
+					placeholder: "篩選動作元件…",
+					"aria-label": "篩選動作元件"
+				}),
+				u && /* @__PURE__ */ (0, Y.jsx)("button", {
+					type: "button",
+					"aria-label": "清除動作元件篩選",
+					onClick: () => d(""),
+					children: /* @__PURE__ */ (0, Y.jsx)(Ym, { size: 12 })
+				})
+			]
+		}), Pre),
 		(0, eh.createPortal)(/* @__PURE__ */ (0, Y.jsx)(Zf, {
 			size: 17,
 			"aria-hidden": "true"
@@ -63478,7 +63587,7 @@ var Tre = class extends J.Component {
 		return { failed: !0 };
 	}
 	componentDidCatch(e) {
-		console.error("Modern UI failed to render.", e);
+		console.error("Modern UI failed to render.", e), window.studioStartup?.fail("介面無法正常顯示，請重新整理後再試。");
 	}
 	render() {
 		return this.state.failed ? /* @__PURE__ */ (0, Y.jsxs)("div", {

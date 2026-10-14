@@ -23,7 +23,7 @@ export class ExportService {
       name: "EXPORT-MANIFEST.json",
       data: json({
         product: "Automation Studio",
-        productVersion: "2.0.2",
+        productVersion: "2.0.6",
         exportedAt: new Date().toISOString(),
         projectId: project.id,
         projectVersion: project.version,

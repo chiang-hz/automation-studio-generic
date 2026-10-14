@@ -37,7 +37,7 @@ with sync_playwright() as p:
  expect(page.get_by_role('dialog')).to_have_count(0)
  check('Single click selects a step without opening settings')
  page.locator('[data-modern-step="yes"]').dblclick()
- expect(page.get_by_role('dialog')).to_be_visible();expect(page.locator('#stepName')).to_have_value('yes')
+ expect(page.get_by_role('dialog')).to_be_visible();expect(page.locator('.ui-overlay')).to_have_count(0);expect(page.locator('#stepName')).to_have_value('yes')
  check('Double-click opens the Property Sheet for selected nested step')
  page.get_by_role('dialog').get_by_role('button',name='關閉',exact=True).click()
  page.locator('[data-modern-step="no"]').click()
@@ -89,7 +89,7 @@ with sync_playwright() as p:
  page.evaluate("""()=>{const s=window.studioBridge.snapshot().state;s.batchRows=Array.from({length:1000},(_,i)=>({id:'large-'+i,enabled:true,parameters:{year:'115',stage:'2',amount:String(i)}}));window.studioBridge.setBatchRows(s.batchRows);}""")
  check('Batch virtualization renders bounded DOM',page.locator('.modern-data-grid tbody tr').count()<30)
  # Return to designer and verify saved JSON and local Monaco worker requests.
- page.evaluate("window.studioBridge.navigate('designer')");page.locator('[data-modern-step="start"]').click();page.wait_for_function("document.querySelector('.monaco-editor')")
+ page.evaluate("window.studioBridge.navigate('designer')");page.locator('[data-modern-step="start"]').dblclick();page.wait_for_function("document.querySelector('.monaco-editor')")
  check('Monaco selector editor loads local assets')
  page.get_by_role('dialog').get_by_role('button',name='關閉',exact=True).click();page.evaluate("window.studioBridge.save()")
  persisted=page.request.get('http://127.0.0.1:4175/api/studio/projects/ui-verification').json()['project'];check('Saving retains nested structure and edits',persisted['steps'][2]['thenSteps'][0]['name']=='條件成立步驟')

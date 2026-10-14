@@ -46,8 +46,7 @@ export function SettingsPage() {
   const aiSlot = useRef<HTMLDivElement>(null);
   const liveSettings = (snapshot.state.settings ?? {}) as StudioSettings;
   const [draft, setDraft] = useState<StudioSettings>(() => {
-    const preferred = localStorage.getItem('studio-ui-theme');
-    return { ...liveSettings, theme: preferred === 'light' || preferred === 'dark' ? preferred : liveSettings.theme };
+    return { ...liveSettings };
   });
   const [cleanup, setCleanup] = useState({ debug: liveSettings.debugCleanupStatus, runs: liveSettings.runHistoryCleanupStatus });
   const [busy, setBusy] = useState<'save' | 'debug' | 'runs' | null>(null);
@@ -57,8 +56,6 @@ export function SettingsPage() {
   useEffect(() => {
     if (!dirty.current) {
       const next = { ...(snapshot.state.settings ?? {}) } as StudioSettings;
-      const preferred = localStorage.getItem('studio-ui-theme');
-      if (preferred === 'light' || preferred === 'dark') next.theme = preferred;
       setDraft(next);
       setCleanup({ debug: next.debugCleanupStatus, runs: next.runHistoryCleanupStatus });
       runtimeSdk.syncSettingsDraft(next as Record<string, unknown>);

@@ -1132,15 +1132,15 @@ test("v1.0.40 publish autosave, empty batch state, debug tabs and layout refinem
 });
 
 
-test("Automation Studio product metadata is v2.0.2 and the classic interface is removed", async () => {
-  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.0.2");
+test("Automation Studio product metadata is v2.0.4 and the classic interface is removed", async () => {
+  assert.equal((await fs.readFile(path.resolve("VERSION"), "utf8")).trim(), "2.0.4");
   const pkg = JSON.parse(await fs.readFile(path.resolve("package.json"), "utf8"));
   const router = await fs.readFile(path.resolve("src/studio/router.ts"), "utf8");
   const exporter = await fs.readFile(path.resolve("src/studio/exporter.ts"), "utf8");
-  assert.equal(pkg.version, "2.0.2");
+  assert.equal(pkg.version, "2.0.4");
   assert.match(pkg.version, /^\d+\.[0-9]\.[0-9]$/);
-  assert.match(router, /version: "2\.0\.2"/);
-  assert.match(exporter, /productVersion: "2\.0\.2"/);
+  assert.match(router, /version: "2\.0\.4"/);
+  assert.match(exporter, /productVersion: "2\.0\.4"/);
   const versioning = await fs.readFile(path.resolve("VERSIONING.md"), "utf8");
   assert.match(versioning, /MAJOR\.MINOR\.PATCH/);
   const modernUi = await fs.readFile(path.resolve("frontend/src/main.tsx"), "utf8");
@@ -2612,4 +2612,25 @@ test("V1.2.0 執行紀錄提供失敗診斷下載、批次管理與獨立保留�
   assert.match(router, /DIAGNOSTICS_PURGED/);
   assert.match(store, /maybeCleanupExpiredRunHistory/);
   assert.match(store, /runHistoryRetentionDays:/);
+});
+
+test("V2.0.4 專業介面：無遮罩右側步驟設定面板、動作元件分類篩選與單行緊湊型頂部列", async () => {
+  const dialog = await fs.readFile(path.resolve("frontend/src/components/ui/dialog.tsx"), "utf8");
+  const designer = await fs.readFile(path.resolve("frontend/src/components/Designer.tsx"), "utf8");
+  const main = await fs.readFile(path.resolve("frontend/src/main.tsx"), "utf8");
+  const styles = await fs.readFile(path.resolve("frontend/src/styles.css"), "utf8");
+  const html = await fs.readFile(path.resolve("public/index.html"), "utf8");
+  assert.match(dialog, /modal=\{!sheet\}/);
+  assert.match(dialog, /\{!sheet&&<DialogPrimitive\.Overlay className="ui-overlay"\/>\}/);
+  assert.match(dialog, /onInteractOutside=\{e=>\{if\(sheet\)e\.preventDefault\(\);\}\}/);
+  assert.match(designer, /designer-sheet-open/);
+  assert.match(designer, /搜尋動作元件/);
+  assert.match(main, /modern-palette-search/);
+  assert.match(main, /篩選動作元件/);
+  assert.match(html, /data-palette-group="nav"/);
+  assert.match(html, /data-palette-group="interact"/);
+  assert.match(html, /data-palette-group="extract"/);
+  assert.match(html, /data-palette-group="wait"/);
+  assert.match(html, /data-palette-group="flow"/);
+  assert.match(styles, /html\.modern-active\.designer-sheet-open #designerView/);
 });
