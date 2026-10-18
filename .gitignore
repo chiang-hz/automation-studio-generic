@@ -43,7 +43,6 @@ Thumbs.db
 *_HOTFIX.md
 V[0-9]*.md
 V[0-9]*.html
-VERSIONING.md
 .vscode/
 
 # Local MCP logs, CLI shims, and test visual reviews
